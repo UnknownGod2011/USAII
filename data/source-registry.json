@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-06-17T10:26:29.243Z",
+  "updatedAt": "2026-06-17T16:16:00.903Z",
   "note": "LaunchPilot ships with a deterministic seed registry. Live data connectors can refresh these records when API access is configured.",
   "sources": [
     {

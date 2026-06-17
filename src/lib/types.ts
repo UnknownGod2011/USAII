@@ -13,6 +13,7 @@ export type IdeaStage = "no idea yet" | "rough idea" | "started building" | "MVP
 
 export type FounderProfile = {
   name: string;
+  startupName?: string;
   location: string;
   status: string;
   ageRange?: string;
@@ -109,6 +110,17 @@ export type ResearchPack = {
   opportunities: string[];
   skillResources: string[];
   aiSummary?: string;
+  score?: {
+    marketDemand: number;
+    competitiveSaturation: number;
+    feasibility: number;
+    founderFit: number;
+    sourceQuality: number;
+    overall: number;
+    rating: "Strong" | "Promising" | "Needs sharper validation" | "Weak";
+    reasoning: string[];
+    suggestedPivot?: string;
+  };
 };
 
 export type LaunchBrief = {

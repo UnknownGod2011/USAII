@@ -14,6 +14,6 @@ export function keyPoolStatus(keys = parseGeminiKeyPool()) {
   return {
     available: keys.length > 0,
     count: keys.length,
-    mode: keys.length > 0 ? "env-key-pool" : "deterministic-fallback",
+    mode: keys.length > 0 ? "env-key-pool" : "ai-unavailable",
   };
 }

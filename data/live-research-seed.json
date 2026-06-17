@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-06-17T10:26:29.245Z",
+  "updatedAt": "2026-06-17T16:16:00.903Z",
   "note": "Live public data snapshot used by LaunchPilot's RAG/research layer when available.",
   "worldBankIndiaNewBusinesses": [
     {
@@ -39,6 +39,21 @@
     {
       "title": "Show HN: Merchpath Curated swag platform for startups",
       "url": "https://www.merchpath.co",
+      "points": 1
+    },
+    {
+      "title": "Team dynamics after pre-$eed",
+      "url": "https://news.ycombinator.com/item?id=20549430",
+      "points": 4
+    },
+    {
+      "title": "Launch HN: Xkit (YC S18) OAuth infrastructure as a service",
+      "url": "https://news.ycombinator.com/item?id=24121290",
+      "points": 138
+    },
+    {
+      "title": "Show HN: TinTekka AI tool roadmap for agencies",
+      "url": "https://tintekka.com",
       "points": 1
     }
   ],

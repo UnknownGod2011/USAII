@@ -1,251 +1,511 @@
 "use client";
 
 import { Badge } from "@/components/Badge";
+import { ChatInterviewView, type ChatMessage } from "@/components/ChatInterviewView";
 import { Nav } from "@/components/Nav";
-import { generateLaunchBrief, problemDiscoveryCards } from "@/lib/agents";
-import { isIrrelevantFounderQuestion, redirectMessage } from "@/lib/guardrails";
-import { demoProfile, emptyProfile } from "@/lib/seed";
-import type { FounderProfile } from "@/lib/types";
-import { ArrowRight, CheckCircle2, ClipboardList, Compass, Mic, MicOff, Search } from "lucide-react";
+import { VoiceInterviewView } from "@/components/VoiceInterviewView";
+import { useVoiceConversation } from "@/hooks/useVoiceConversation";
+import type { IdeaEvaluation } from "@/lib/evaluation";
+import { intakeToFounderProfile, type IntakeAnswers } from "@/lib/intake-questions";
+import { loadIntakeSession, saveIntakeSession } from "@/lib/intake-session";
+import type { VoiceOrbStatus } from "@/lib/voice";
+import { preloadSpeechVoices } from "@/lib/voice";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
-const questions = [
-  "What's your name?",
-  "How old are you, and which country/city are you building from?",
-  "Are you a student, working professional, or exploring independently?",
-  "Do you already have a startup idea, or are you still exploring?",
-  "How many hours per week can you realistically spend?",
-  "What skills do you currently have?",
-  "What is your rough idea? If you have no idea yet, say 'no idea yet'.",
-  "Who do you think has this problem?",
-  "What evidence do you already have?",
-  "What budget or resources can you use right now?",
-  "Would you be willing to learn new skills or complete courses?",
-  "What would make the next 30 days successful?",
-];
+type Phase = "interview" | "complete" | "researching" | "verdict";
 
-type BrowserSpeechRecognition = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: { results: SpeechRecognitionResultList }) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechWindow = Window & {
-  SpeechRecognition?: new () => BrowserSpeechRecognition;
-  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+type InterviewApiResponse = {
+  validation: { valid: boolean; mode: "gemini"; feedback?: string };
+  assistantMessage: string;
+  currentQuestion: string | null;
+  validatedCount: number;
+  totalQuestions: number;
+  answers: IntakeAnswers;
+  askedQuestions: string[];
+  isComplete: boolean;
+  questionNumber: number | null;
+  error?: string;
 };
 
 function InterviewInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const mode = params.get("mode") || "chat";
-  const [step, setStep] = useState(0);
+  const voiceMode = params.get("mode") === "voice";
+
+  const [phase, setPhase] = useState<Phase>("interview");
+  const [validatedCount, setValidatedCount] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(18);
+  const [answers, setAnswers] = useState<IntakeAnswers>({});
+  const [askedQuestions, setAskedQuestions] = useState<string[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState("");
   const [input, setInput] = useState("");
-  const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const [messages, setMessages] = useState<string[]>([
-    "Hey there! Ready to build the next big thing? Let's start with you first. I will ask a few focused questions about your goals, skills, time, budget, current stage, and ambition. Then real research agents will build your startup roadmap.",
-  ]);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const noIdea = useMemo(() => Object.values(answers).join(" ").toLowerCase().includes("no idea"), [answers]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceOrbStatus>("idle");
+  const [voiceStatusLabel, setVoiceStatusLabel] = useState("Preparing your intake session");
+  const [behindScenes, setBehindScenes] = useState("Preparing your intake session");
+  const [researchStep, setResearchStep] = useState(0);
+  const [evaluation, setEvaluation] = useState<IdeaEvaluation | null>(null);
+  const [brainstormText, setBrainstormText] = useState("");
+  const [geminiAvailable, setGeminiAvailable] = useState(false);
+  const [interviewError, setInterviewError] = useState("");
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [correctionText, setCorrectionText] = useState("");
 
-  function submitAnswer() {
-    if (isIrrelevantFounderQuestion(input)) {
-      setMessages((prev) => [...prev, `You: ${input}`, redirectMessage]);
-      setInput("");
+  const messageIdRef = useRef(0);
+  const bootedRef = useRef(false);
+  const phaseRef = useRef(phase);
+  const answersRef = useRef(answers);
+  const validatedCountRef = useRef(validatedCount);
+  const currentQuestionRef = useRef(currentQuestion);
+  const askedQuestionsRef = useRef(askedQuestions);
+  const totalQuestionsRef = useRef(totalQuestions);
+  const voiceConversationRef = useRef<ReturnType<typeof useVoiceConversation> | null>(null);
+
+  useEffect(() => {
+    if (voiceMode) preloadSpeechVoices();
+  }, [voiceMode]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+  useEffect(() => {
+    validatedCountRef.current = validatedCount;
+  }, [validatedCount]);
+  useEffect(() => {
+    currentQuestionRef.current = currentQuestion;
+  }, [currentQuestion]);
+  useEffect(() => {
+    askedQuestionsRef.current = askedQuestions;
+  }, [askedQuestions]);
+  useEffect(() => {
+    totalQuestionsRef.current = totalQuestions;
+  }, [totalQuestions]);
+
+  const updateVoiceStatus = useCallback((status: VoiceOrbStatus, label: string) => {
+    setVoiceStatus(status);
+    setVoiceStatusLabel(label);
+  }, []);
+
+  const applyInterviewState = useCallback((data: Pick<InterviewApiResponse, "validatedCount" | "totalQuestions" | "answers" | "currentQuestion" | "askedQuestions">) => {
+    validatedCountRef.current = data.validatedCount;
+    totalQuestionsRef.current = data.totalQuestions || totalQuestionsRef.current;
+    answersRef.current = data.answers || {};
+    currentQuestionRef.current = data.currentQuestion || "";
+    askedQuestionsRef.current = data.askedQuestions || [];
+
+    setValidatedCount(validatedCountRef.current);
+    setTotalQuestions(totalQuestionsRef.current);
+    setAnswers(answersRef.current);
+    setCurrentQuestion(currentQuestionRef.current);
+    setAskedQuestions(askedQuestionsRef.current);
+  }, []);
+
+  const pushMessage = useCallback((message: Omit<ChatMessage, "id">) => {
+    if (voiceMode) return;
+    messageIdRef.current += 1;
+    setMessages((prev) => [...prev, { ...message, id: `msg-${messageIdRef.current}` }]);
+  }, [voiceMode]);
+
+  const persistSession = useCallback(() => {
+    saveIntakeSession({
+      validatedCount: validatedCountRef.current,
+      answers: answersRef.current,
+      phase: phaseRef.current,
+      currentQuestion,
+      askedQuestions: askedQuestionsRef.current,
+      totalQuestions: totalQuestionsRef.current,
+    });
+  }, [currentQuestion]);
+
+  useEffect(() => {
+    persistSession();
+  }, [validatedCount, answers, phase, currentQuestion, persistSession]);
+
+  const runResearch = useCallback(
+    async (finalAnswers: IntakeAnswers, ideaOverride?: string) => {
+      setPhase("researching");
+      setBehindScenes("Research agents running");
+      updateVoiceStatus("thinking", "Researching your idea");
+      if (voiceMode) {
+        voiceConversationRef.current?.speakThenListen(
+          "Thanks for answering — let me carry out some real market research now. Evaluating your startup idea.",
+          updateVoiceStatus,
+          false,
+        );
+      } else {
+        pushMessage({ role: "system", text: "Research agent working: evaluating your startup idea with current sources.", validationMode: "gemini" });
+      }
+      setResearchStep(0);
+
+      const stepTimer = window.setInterval(() => {
+        setResearchStep((step) => Math.min(step + 1, 7));
+      }, 900);
+
+      try {
+        const result = await fetch("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answers: finalAnswers, ideaOverride }),
+        }).then((res) => res.json());
+
+        window.clearInterval(stepTimer);
+        setResearchStep(7);
+        setEvaluation(result);
+        setPhase("verdict");
+        setBehindScenes("Verdict ready");
+        updateVoiceStatus("idle", "Verdict ready");
+
+        const storedAnswers = ideaOverride ? { ...finalAnswers, rawIdea: ideaOverride } : finalAnswers;
+        const profile = intakeToFounderProfile(storedAnswers);
+        localStorage.setItem("launchpilot-profile", JSON.stringify(profile));
+        localStorage.setItem("launchpilot-intake", JSON.stringify({ answers: storedAnswers, evaluation: result }));
+        localStorage.setItem("launchpilot-brief", JSON.stringify(result.brief));
+      } catch {
+        window.clearInterval(stepTimer);
+        setBehindScenes("Research failed — using registry fallback");
+        pushMessage({
+          role: "system",
+          text: "Research could not complete. You can still continue with saved intake answers.",
+          validationMode: "gemini",
+        });
+      }
+    },
+    [pushMessage, updateVoiceStatus, voiceMode],
+  );
+
+  const rerunResearchWithIdea = useCallback(
+    async (idea: string) => {
+      const trimmed = idea.trim();
+      if (!trimmed) return;
+      const nextAnswers = { ...answersRef.current, rawIdea: trimmed };
+      answersRef.current = nextAnswers;
+      setAnswers(nextAnswers);
+      setBrainstormText("");
+      if (!voiceMode) {
+        pushMessage({ role: "user", text: `Evaluate revised idea: ${trimmed}` });
+        pushMessage({ role: "system", text: "Research agent working: rescoring the revised idea.", validationMode: "gemini" });
+      }
+      await runResearch(nextAnswers, trimmed);
+    },
+    [pushMessage, runResearch, voiceMode],
+  );
+
+  const proceedToDashboard = useCallback(
+    (force = false) => {
+      if (force) localStorage.setItem("launchpilot-proceed-override", "true");
+      router.push("/dashboard");
+    },
+    [router],
+  );
+
+  const processInterviewResponse = useCallback(
+    async (data: InterviewApiResponse) => {
+      if (data.error) {
+        setInterviewError(data.error);
+        setBehindScenes("AI interview error");
+        updateVoiceStatus("idle", "AI interview error — retry or switch to text");
+        if (!voiceMode) {
+          pushMessage({ role: "system", text: `${data.error} Use Retry to continue.`, validationMode: "gemini" });
+        }
+        return;
+      }
+
+      setInterviewError("");
+      applyInterviewState(data);
+
+      if (!data.validation.valid) {
+        setBehindScenes(data.validation.feedback?.includes("didn't quite get") ? "Re-asking the same question" : "Answer needs more detail");
+        if (voiceMode) {
+          voiceConversationRef.current?.speakThenListen(data.assistantMessage, updateVoiceStatus);
+        } else {
+          pushMessage({ role: "assistant", text: data.assistantMessage, validationMode: data.validation.mode });
+        }
+        return;
+      }
+
+      if (data.isComplete) {
+        setPhase("complete");
+        setBehindScenes("Intake complete · starting research");
+        if (voiceMode) {
+          voiceConversationRef.current?.speakThenListen(data.assistantMessage, updateVoiceStatus, false);
+        } else {
+          pushMessage({ role: "assistant", text: data.assistantMessage, validationMode: data.validation.mode });
+        }
+        await runResearch(data.answers);
+        return;
+      }
+
+      setBehindScenes(`AI interview · question ${data.questionNumber || data.validatedCount + 1} of about ${data.totalQuestions}`);
+      if (voiceMode) {
+        voiceConversationRef.current?.speakThenListen(data.assistantMessage, updateVoiceStatus);
+      } else {
+        pushMessage({ role: "assistant", text: data.assistantMessage, validationMode: data.validation.mode });
+      }
+    },
+    [applyInterviewState, pushMessage, runResearch, updateVoiceStatus, voiceMode],
+  );
+
+  const submitAnswer = useCallback(
+    async (rawAnswer?: string) => {
+      const trimmed = (rawAnswer ?? input).trim();
+      if (!trimmed || submitting || phaseRef.current !== "interview") return false;
+
+      setSubmitting(true);
+      voiceConversationRef.current?.markThinking(updateVoiceStatus);
+      voiceConversationRef.current?.stopAll();
+
+      if (!voiceMode) {
+        pushMessage({ role: "user", text: trimmed });
+        setInput("");
+      }
+
+      try {
+        const data: InterviewApiResponse = await fetch("/api/interview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            validatedCount: validatedCountRef.current,
+            answers: answersRef.current,
+            phase: phaseRef.current,
+            currentQuestion: currentQuestionRef.current,
+            askedQuestions: askedQuestionsRef.current,
+            answer: trimmed,
+          }),
+        }).then((res) => res.json());
+
+        await processInterviewResponse(data);
+        return true;
+      } catch {
+        if (!voiceMode) {
+          pushMessage({
+            role: "system",
+            text: "Could not validate that answer. Try again.",
+            validationMode: "gemini",
+          });
+        } else {
+          updateVoiceStatus("idle", "Something went wrong — try again or switch to text");
+          setShowCorrection(true);
+          setCorrectionText(trimmed);
+        }
+        return false;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [input, processInterviewResponse, pushMessage, submitting, updateVoiceStatus, voiceMode],
+  );
+
+  const retryInterview = useCallback(async () => {
+    if (submitting) return;
+    setInterviewError("");
+    if (currentQuestionRef.current) {
+      setBehindScenes("AI interview ready");
+      if (voiceMode) {
+        voiceConversationRef.current?.speakThenListen(currentQuestionRef.current, updateVoiceStatus);
+      }
       return;
     }
-    const key = questions[step] || "extra";
-    setAnswers((prev) => ({ ...prev, [key]: input }));
-    const nextStep = Math.min(step + 1, questions.length);
-    setStep(nextStep);
-    setMessages((prev) => [
-      ...prev,
-      `You: ${input}`,
-      nextStep < questions.length
-        ? questions[nextStep]
-        : "Good. I have enough context to create your Launch Brief. You can approve research or use fallback analysis.",
-    ]);
-    setInput("");
-  }
-
-  function buildProfile(useDemo = false): FounderProfile {
-    if (useDemo) return demoProfile;
-    const skillText = answers[questions[5]] || "";
-    const skills = skillText
-      .split(/,|and|\n/)
-      .map((skill) => skill.trim())
-      .filter(Boolean);
-    if (noIdea) {
-      return {
-        ...emptyProfile,
-        name: answers[questions[0]] || emptyProfile.name,
-        location: answers[questions[1]] || emptyProfile.location,
-        status: answers[questions[2]] || emptyProfile.status,
-        hoursPerWeek: Number.parseInt(answers[questions[4]] || "6", 10) || 6,
-        skills: skills.length ? skills : emptyProfile.skills,
-        budget: answers[questions[9]] || emptyProfile.budget,
-        willingnessToLearn: answers[questions[10]] || emptyProfile.willingnessToLearn,
-        success30Days: answers[questions[11]] || emptyProfile.success30Days,
-      };
+    setLoading(true);
+    try {
+      const data: InterviewApiResponse = await fetch("/api/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ init: true }),
+      }).then((res) => res.json());
+      await processInterviewResponse(data);
+    } catch {
+      setInterviewError("Could not reach the AI interview service. Check your Gemini key or network and retry.");
+    } finally {
+      setLoading(false);
     }
-    return {
-      ...demoProfile,
-      name: answers[questions[0]] || demoProfile.name,
-      location: answers[questions[1]] || demoProfile.location,
-      status: answers[questions[2]] || demoProfile.status,
-      ideaStage: (answers[questions[3]] || answers[questions[6]] || "").toLowerCase().includes("no idea") ? "no idea yet" : "rough idea",
-      hoursPerWeek: Number.parseInt(answers[questions[4]] || "10", 10) || 10,
-      skills: skills.length ? skills : demoProfile.skills,
-      rawIdea: answers[questions[6]] || demoProfile.rawIdea,
-      targetUser: answers[questions[7]] || demoProfile.targetUser,
-      evidence: [answers[questions[8]] || "no formal user validation yet"],
-      budget: answers[questions[9]] || demoProfile.budget,
-      willingnessToLearn: answers[questions[10]] || demoProfile.willingnessToLearn,
-      success30Days: answers[questions[11]] || demoProfile.success30Days,
-    };
-  }
+  }, [processInterviewResponse, submitting, updateVoiceStatus, voiceMode]);
 
-  function finish(useDemo = false) {
-    const profile = buildProfile(useDemo);
-    localStorage.setItem("launchpilot-profile", JSON.stringify(profile));
-    localStorage.setItem("launchpilot-interview", JSON.stringify({ answers, messages }));
-    localStorage.setItem("launchpilot-brief", JSON.stringify(generateLaunchBrief(profile)));
-    router.push("/research");
-  }
+  const voiceConversation = useVoiceConversation({
+    enabled: voiceMode,
+    active: phase === "interview" && !loading && !submitting,
+    onSilenceSubmit: async (transcript) => {
+      await submitAnswer(transcript);
+    },
+  });
 
-  function toggleVoice() {
-    const SpeechRecognition = (window as SpeechWindow).SpeechRecognition || (window as SpeechWindow).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setMessages((prev) => [...prev, "Voice is not available in this browser. Text mode is ready and uses the same founder workflow."]);
-      return;
+  useEffect(() => {
+    voiceConversationRef.current = voiceConversation;
+  }, [voiceConversation]);
+
+  const applyOpening = useCallback(
+    (data: {
+      assistantMessage: string;
+      currentQuestion: string | null;
+      validatedCount: number;
+      totalQuestions: number;
+      answers: IntakeAnswers;
+      askedQuestions: string[];
+      phase: Phase;
+      error?: string;
+    }) => {
+      if (data.error) {
+        setInterviewError(data.error);
+        setBehindScenes("AI interview error");
+        if (!voiceMode) pushMessage({ role: "system", text: `${data.error} Use Retry to start again.`, validationMode: "gemini" });
+        return;
+      }
+      applyInterviewState(data);
+      setPhase(data.phase);
+      setInterviewError("");
+      setBehindScenes("AI interview ready");
+
+      if (voiceMode) {
+        voiceConversationRef.current?.speakThenListen(data.assistantMessage, updateVoiceStatus);
+      } else {
+        pushMessage({ role: "assistant", text: data.assistantMessage, validationMode: "gemini" });
+      }
+    },
+    [applyInterviewState, pushMessage, updateVoiceStatus, voiceMode],
+  );
+
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+
+    let cancelled = false;
+
+    async function boot() {
+      const saved = loadIntakeSession();
+
+      if (saved && saved.validatedCount > 0) {
+        applyInterviewState({
+          validatedCount: saved.validatedCount,
+          totalQuestions: saved.totalQuestions || 18,
+          answers: saved.answers,
+          currentQuestion: saved.currentQuestion,
+          askedQuestions: saved.askedQuestions || (saved.currentQuestion ? [saved.currentQuestion] : []),
+        });
+        setPhase(saved.phase === "verdict" || saved.phase === "researching" ? "interview" : saved.phase);
+        setLoading(false);
+        setBehindScenes(`Resumed AI interview`);
+        if (!voiceMode) {
+          pushMessage({
+            role: "system",
+            text: `Resumed your AI interview.`,
+            validationMode: "gemini",
+          });
+        }
+        return;
+      }
+
+      try {
+        const [voiceInfo, opening] = await Promise.all([
+          fetch("/api/voice").then((res) => res.json()),
+          fetch("/api/interview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ init: true }),
+          }).then((res) => res.json()),
+        ]);
+
+        if (cancelled) return;
+        setGeminiAvailable(Boolean(voiceInfo?.geminiLive?.available));
+        setBehindScenes(voiceInfo?.geminiLive?.available ? "Gemini key detected · AI interview active" : "Gemini key required for AI interview");
+        applyOpening(opening);
+      } catch {
+        if (!cancelled) {
+          setInterviewError("Could not start the AI interview. Check your Gemini key or network and retry.");
+          pushMessage({ role: "system", text: "Could not start the AI interview. Check your Gemini key or network and retry.", validationMode: "gemini" });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript || "")
-        .join(" ")
-        .trim();
-      if (transcript) setInput(transcript);
+
+    boot();
+    return () => {
+      cancelled = true;
+      voiceConversationRef.current?.stopAll();
     };
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => {
-      setListening(false);
-      setMessages((prev) => [...prev, "Voice capture hit an error. Continue in text mode; your workflow is unchanged."]);
-    };
-    recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <main className="shell-bg min-h-screen">
       <Nav />
-      <section className="mx-auto grid max-w-7xl gap-5 px-5 pb-10 lg:grid-cols-[1fr_390px]">
-        <div className="glass rounded-[32px] p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-stone-500">Founder interview</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950">Warm, short, focused.</h1>
+      <section className="mx-auto max-w-7xl px-5 pb-10 pt-2">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="mono-label">Stage 1 intake</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-stone-50">
+              {voiceMode ? "Voice conversation" : "Chat founder interview"}
+            </h1>
+          </div>
+          {!voiceMode && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge label="Chat mode" />
+              <Badge label={interviewError ? "AI interview error" : "AI interview"} />
+              <Badge label={`${validatedCount}/${totalQuestions} answered`} />
             </div>
-            <Badge label={mode === "voice" ? "Voice fallback ready" : "Text mode"} />
-          </div>
-          <div className="mt-4 rounded-2xl bg-stone-950 px-4 py-3 text-sm leading-6 text-white">
-            {step < questions.length
-              ? questions[step]
-              : "Perfect. I have enough context to create your personalized startup roadmap with live agents."}
-          </div>
-          <div className="mt-6 min-h-[420px] space-y-3 rounded-[26px] bg-white/90 p-4 shadow-inner">
-            {messages.map((message, index) => (
-              <div key={`${message}-${index}`} className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 ${message.startsWith("You:") ? "ml-auto bg-stone-950 text-white" : "bg-stone-50 text-stone-700"}`}>
-                {message}
-              </div>
-            ))}
-            {step >= questions.length && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-stone-700">
-                LaunchPilot wants to research competitors, user pain signals, skill gaps, and relevant opportunities.
-                Use research for a stronger brief, or use fallback analysis if you want the fully local demo path.
-              </div>
-            )}
-          </div>
-          <div className="mt-4 flex gap-2">
-            <input className="min-w-0 flex-1 rounded-full border border-stone-200 bg-white px-4 py-3 outline-none focus:border-stone-400 focus:ring-4 focus:ring-stone-200" value={input} onChange={(e) => setInput(e.target.value)} placeholder={step < questions.length ? questions[step] : "Ask or finish"} onKeyDown={(e) => e.key === "Enter" && submitAnswer()} />
-            {mode === "voice" && (
-              <button className={`inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold ${listening ? "bg-red-600 text-white" : "border border-stone-200 bg-white text-stone-900"}`} onClick={toggleVoice} aria-label={listening ? "Stop voice capture" : "Start voice capture"}>
-                {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                <span className="hidden sm:inline">{listening ? "Stop voice" : "Start voice"}</span>
-              </button>
-            )}
-            <button className="rounded-full bg-stone-950 px-5 py-3 text-sm font-semibold text-white" onClick={submitAnswer}>Send</button>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button className="inline-flex items-center gap-2 rounded-full bg-stone-950 px-5 py-3 text-sm font-semibold text-white" onClick={() => finish(false)}>
-              Start research <ArrowRight className="h-4 w-4" />
-            </button>
-            <button className="rounded-full border border-stone-200 bg-white px-5 py-3 text-sm font-semibold text-stone-900" onClick={() => finish(true)}>
-              Use strong demo profile
-            </button>
-            <button className="rounded-full border border-stone-200 bg-white px-5 py-3 text-sm font-semibold text-stone-900" onClick={() => finish(false)}>
-              Skip and use fallback analysis
-            </button>
-          </div>
-        </div>
-        <aside className="space-y-5">
-          <section className="premium-card rounded-[28px] p-5">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-stone-700" />
-              <h2 className="font-semibold text-stone-950">Research approval</h2>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-stone-600">LaunchPilot checks competitors, user pain signals, skill gaps, and opportunities. If live APIs are not configured, it uses deterministic fallback analysis and labels it clearly.</p>
-          </section>
-          {noIdea && (
-            <section className="premium-card rounded-[28px] p-5">
-              <div className="flex items-center gap-2">
-                <Compass className="h-4 w-4 text-emerald-600" />
-                <h2 className="font-semibold text-stone-950">Problem Discovery Mode</h2>
-              </div>
-              <div className="mt-4 space-y-3">
-                {problemDiscoveryCards(emptyProfile).map((card) => (
-                  <div key={card.problem} className="rounded-2xl bg-stone-50 p-4 text-sm leading-6 text-stone-700">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>{card.problem}</strong>
-                      <Badge label={card.label} />
-                    </div>
-                    <p className="mt-2">{card.howToValidate}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
           )}
-          <section className="premium-card rounded-[28px] p-5">
-            <div className="flex items-center gap-2">
-              <ClipboardList className="h-4 w-4 text-violet-600" />
-              <h2 className="font-semibold text-stone-950">What gets saved</h2>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-stone-600">Founder snapshot, refined idea, assumptions, risks, roadmap, sources, agent outputs, saved decisions, and chat context. Raw audio is not saved.</p>
-          </section>
-          <section className="premium-card rounded-[28px] p-5">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              <h2 className="font-semibold text-stone-950">Guardrails active</h2>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-stone-600">Irrelevant questions are redirected. Voice transcripts go through the same checks as text answers.</p>
-          </section>
-        </aside>
+        </div>
+
+        {voiceMode ? (
+          <VoiceInterviewView
+            status={voiceStatus}
+            statusLabel={voiceStatusLabel}
+            currentQuestion={currentQuestion}
+            validatedCount={validatedCount}
+            totalQuestions={totalQuestions}
+            phase={phase}
+            loading={loading}
+            error={interviewError}
+            researchStep={researchStep}
+            evaluation={evaluation}
+            brainstormText={brainstormText}
+            showCorrection={showCorrection}
+            correctionText={correctionText}
+            onCorrectionChange={setCorrectionText}
+            onCorrectionSubmit={() => {
+              setShowCorrection(false);
+              void submitAnswer(correctionText);
+            }}
+            onRetry={retryInterview}
+            onBrainstormChange={setBrainstormText}
+            onBrainstormSubmit={() => void rerunResearchWithIdea(brainstormText)}
+            onAcceptPivot={() => evaluation?.suggestedPivot && void rerunResearchWithIdea(evaluation.suggestedPivot)}
+            onProceedAnyway={() => proceedToDashboard(true)}
+            onOpenWorkspace={() => proceedToDashboard(false)}
+            onViewResearch={() => router.push("/research")}
+          />
+        ) : (
+          <ChatInterviewView
+            messages={messages}
+            currentQuestion={currentQuestion}
+            input={input}
+            loading={loading}
+            submitting={submitting}
+            phase={phase}
+            validatedCount={validatedCount}
+            totalQuestions={totalQuestions}
+            geminiAvailable={geminiAvailable}
+            error={interviewError}
+            behindScenes={behindScenes}
+            researchStep={researchStep}
+            evaluation={evaluation}
+            brainstormText={brainstormText}
+            onInputChange={setInput}
+            onSubmit={() => void submitAnswer()}
+            onRetry={retryInterview}
+            onBrainstormChange={setBrainstormText}
+            onBrainstormSubmit={() => void rerunResearchWithIdea(brainstormText)}
+            onAcceptPivot={() => evaluation?.suggestedPivot && void rerunResearchWithIdea(evaluation.suggestedPivot)}
+            onProceedAnyway={() => proceedToDashboard(true)}
+            onOpenWorkspace={() => proceedToDashboard(false)}
+            onViewResearch={() => router.push("/research")}
+          />
+        )}
       </section>
     </main>
   );

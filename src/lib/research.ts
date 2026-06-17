@@ -84,6 +84,146 @@ Research signals: ${JSON.stringify({
   return data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("\n").trim() || undefined;
 }
 
+function clampScore(value: unknown, fallback: number) {
+  const number = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(number)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function textFromGemini(data: unknown) {
+  const candidate = (data as { candidates?: { content?: { parts?: { text?: string }[] } }[] })?.candidates?.[0];
+  return candidate?.content?.parts?.map((part) => part.text || "").join("\n").trim() || "";
+}
+
+function parseJsonObject(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("Gemini did not return JSON.");
+    return JSON.parse(match[0]);
+  }
+}
+
+function groundedSources(data: unknown, fetchedAt: string): Source[] {
+  const chunks =
+    (data as {
+      candidates?: {
+        groundingMetadata?: {
+          groundingChunks?: { web?: { title?: string; uri?: string } }[];
+        };
+      }[];
+    })?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+
+  return chunks
+    .map((chunk, index) => {
+      const title = chunk.web?.title?.trim();
+      const url = chunk.web?.uri?.trim();
+      if (!title || !url) return null;
+      const official = /\.(gov|edu)(\/|$)/i.test(url) || /official|world bank|government|oecd|census|data/i.test(title);
+      return {
+        id: `gemini-grounded-${index}-${url.slice(0, 40)}`,
+        title,
+        url,
+        type: official ? "grounded official/current web source" : "grounded current web source",
+        label: official ? "Official source" : "Verified",
+        snippet: "Returned by Gemini Google Search grounding",
+        fetchedAt,
+      } satisfies Source;
+    })
+    .filter(Boolean) as Source[];
+}
+
+async function groundedGeminiResearch(profile: FounderProfile, fetchedAt: string): Promise<{
+  marketSignals: string[];
+  competitors: string[];
+  opportunities: string[];
+  skillResources: string[];
+  summary?: string;
+  score: NonNullable<ResearchPack["score"]>;
+  sources: Source[];
+}> {
+  const key = selectGeminiKey(1);
+  if (!key) throw new Error("Gemini key not configured for grounded research.");
+
+  const model = process.env.GEMINI_RESEARCH_MODEL || "gemini-2.5-flash";
+  const prompt = `Research this startup idea using current web data and return evidence-tied JSON.
+
+Founder profile:
+${JSON.stringify(profile, null, 2)}
+
+Evaluate:
+- market demand signals
+- competitive saturation and alternatives
+- feasibility given founder skills, weekly time, budget, and stage
+- founder fit
+- source quality
+
+Return JSON only:
+{
+  "marketSignals": ["specific current signal with source context"],
+  "competitors": ["competitor or substitute"],
+  "opportunities": ["program, wedge, or market opening"],
+  "skillResources": ["skill or learning resource"],
+  "summary": "science-honest synthesis",
+  "score": {
+    "marketDemand": 0,
+    "competitiveSaturation": 0,
+    "feasibility": 0,
+    "founderFit": 0,
+    "sourceQuality": 0,
+    "overall": 0,
+    "rating": "Strong | Promising | Needs sharper validation | Weak",
+    "reasoning": ["short evidence-tied reason"],
+    "suggestedPivot": "more promising direction if needed"
+  }
+}`;
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": key,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: {
+        temperature: model.startsWith("gemini-3") ? 1 : 0.35,
+        maxOutputTokens: 1600,
+      },
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Gemini grounded research failed: ${response.status} ${response.statusText}`);
+  const data = await response.json();
+  const parsed = parseJsonObject(textFromGemini(data));
+  const rawScore = parsed.score || {};
+  const score: NonNullable<ResearchPack["score"]> = {
+    marketDemand: clampScore(rawScore.marketDemand, 50),
+    competitiveSaturation: clampScore(rawScore.competitiveSaturation, 50),
+    feasibility: clampScore(rawScore.feasibility, 50),
+    founderFit: clampScore(rawScore.founderFit, 50),
+    sourceQuality: clampScore(rawScore.sourceQuality, 60),
+    overall: clampScore(rawScore.overall, 50),
+    rating: ["Strong", "Promising", "Needs sharper validation", "Weak"].includes(rawScore.rating)
+      ? rawScore.rating
+      : "Needs sharper validation",
+    reasoning: Array.isArray(rawScore.reasoning) ? rawScore.reasoning.map(String).slice(0, 5) : [],
+    suggestedPivot: rawScore.suggestedPivot ? String(rawScore.suggestedPivot) : undefined,
+  };
+
+  return {
+    marketSignals: Array.isArray(parsed.marketSignals) ? parsed.marketSignals.map(String).slice(0, 8) : [],
+    competitors: Array.isArray(parsed.competitors) ? parsed.competitors.map(String).slice(0, 8) : [],
+    opportunities: Array.isArray(parsed.opportunities) ? parsed.opportunities.map(String).slice(0, 6) : [],
+    skillResources: Array.isArray(parsed.skillResources) ? parsed.skillResources.map(String).slice(0, 6) : [],
+    summary: parsed.summary ? String(parsed.summary) : undefined,
+    score,
+    sources: groundedSources(data, fetchedAt),
+  };
+}
+
 export async function runLiveResearch(profile: FounderProfile): Promise<ResearchPack> {
   const fetchedAt = new Date().toISOString();
   const logs: string[] = [];
@@ -97,6 +237,24 @@ export async function runLiveResearch(profile: FounderProfile): Promise<Research
   const broadQuery = encodeURIComponent("startup validation founder customer discovery MVP");
 
   logs.push("Queued Market Agent, Competitor Agent, Opportunity Agent, Skill Agent, and Source Quality Agent.");
+
+  const grounded = await groundedGeminiResearch(profile, fetchedAt)
+    .then((result) => {
+      logs.push("Ran Gemini Google Search grounding for current market and competitor evidence.");
+      return result;
+    })
+    .catch((error) => {
+      logs.push(`Gemini grounding unavailable; continuing with public APIs and registry fallback. ${error instanceof Error ? error.message : ""}`.trim());
+      return null;
+    });
+
+  grounded?.sources.forEach((source) => {
+    if (!sources.some((item) => item.url === source.url)) sources.push(source);
+  });
+  grounded?.competitors.forEach((item) => competitors.add(item));
+  grounded?.marketSignals.forEach((item) => marketSignals.add(item));
+  grounded?.opportunities.forEach((item) => opportunities.add(item));
+  grounded?.skillResources.forEach((item) => skillResources.add(item));
 
   const tasks = await Promise.allSettled([
     fetchJson(`https://hn.algolia.com/api/v1/search?query=${focusedQuery}&tags=story&hitsPerPage=5`),
@@ -262,14 +420,16 @@ export async function runLiveResearch(profile: FounderProfile): Promise<Research
     marketSignals: marketSignals.size ? Array.from(marketSignals) : ["No fresh market signal fetched; use problem interviews as primary evidence."],
     opportunities: opportunities.size ? Array.from(opportunities) : ["Use university incubators, founder office hours, and hackathon communities before fundraising."],
     skillResources: skillResources.size ? Array.from(skillResources) : ["USAII learning path: customer discovery, MVP design, AI prototyping, and founder communication."],
+    aiSummary: grounded?.summary,
+    score: grounded?.score,
   };
 
-  const aiSummary = await geminiSummary(profile, pack).catch(() => undefined);
+  const aiSummary = pack.aiSummary || (await geminiSummary(profile, pack).catch(() => undefined));
   return {
     ...pack,
-    mode: aiSummary ? "live" : pack.mode,
+    mode: grounded ? "live" : aiSummary ? "hybrid" : pack.mode,
     aiSummary,
-    logs: aiSummary ? [...pack.logs, "Generated synthesis with Gemini using retrieved sources."] : [...pack.logs, "Gemini key not configured or request failed; used retrieved data plus deterministic reasoning."],
+    logs: aiSummary ? [...pack.logs, "Generated synthesis with Gemini using retrieved sources."] : [...pack.logs, "Gemini synthesis unavailable; used retrieved data plus registry reasoning."],
   };
 }
 

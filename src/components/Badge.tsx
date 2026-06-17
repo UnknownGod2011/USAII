@@ -1,15 +1,15 @@
 import type { EvidenceLabel } from "@/lib/types";
 
 const styles: Record<string, string> = {
-  Verified: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  Inferred: "border-sky-200 bg-sky-50 text-sky-700",
-  Approximate: "border-amber-200 bg-amber-50 text-amber-700",
-  "Needs validation": "border-orange-200 bg-orange-50 text-orange-700",
-  "AI may be wrong": "border-rose-200 bg-rose-50 text-rose-700",
-  "Fallback analysis": "border-slate-200 bg-slate-50 text-slate-600",
-  "Official source": "border-blue-200 bg-blue-50 text-blue-700",
-  "Community signal": "border-violet-200 bg-violet-50 text-violet-700",
-  "Framework-based": "border-indigo-200 bg-indigo-50 text-indigo-700",
+  Verified: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  Inferred: "border-sky-500/30 bg-sky-500/10 text-sky-300",
+  Approximate: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  "Needs validation": "border-orange-500/30 bg-orange-500/10 text-orange-300",
+  "AI may be wrong": "border-rose-500/30 bg-rose-500/10 text-rose-300",
+  "Fallback analysis": "border-slate-500/30 bg-slate-500/10 text-slate-300",
+  "Official source": "border-blue-500/30 bg-blue-500/10 text-blue-300",
+  "Community signal": "border-violet-500/30 bg-violet-500/10 text-violet-300",
+  "Framework-based": "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
 };
 
 export function Badge({ label }: { label: EvidenceLabel | string }) {
