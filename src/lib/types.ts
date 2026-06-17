@@ -37,6 +37,8 @@ export type Source = {
   url: string;
   type: string;
   label: EvidenceLabel;
+  snippet?: string;
+  fetchedAt?: string;
 };
 
 export type ReasoningCard = {
@@ -77,11 +79,36 @@ export type AgentOutput = {
   name: string;
   role: string;
   status: "Planned" | "Running" | "Complete";
+  liveSteps?: string[];
   finding: string;
   whyItMatters: string;
   label: EvidenceLabel;
   confidence: "Low" | "Medium" | "High";
   reasoning: ReasoningCard;
+  plan?: string[];
+  sources?: Source[];
+};
+
+export type FounderScore = {
+  feasibility: number;
+  marketOpportunity: number;
+  executionDifficulty: number;
+  founderFit: number;
+  overall: number;
+  label: string;
+  notes: string[];
+};
+
+export type ResearchPack = {
+  mode: "live" | "hybrid" | "fallback";
+  fetchedAt: string;
+  logs: string[];
+  sources: Source[];
+  competitors: string[];
+  marketSignals: string[];
+  opportunities: string[];
+  skillResources: string[];
+  aiSummary?: string;
 };
 
 export type LaunchBrief = {
@@ -97,6 +124,7 @@ export type LaunchBrief = {
     | "Fundraising is premature"
     | "Funding-readiness possible later";
   currentBottleneck: string;
+  founderScore: FounderScore;
   strongestPoint: string;
   weakestPoint: string;
   nextValidationTask: string;
@@ -116,6 +144,7 @@ export type LaunchBrief = {
     deckOutline: string[];
   };
   responsibleAINotes: string[];
+  research: ResearchPack;
   sources: Source[];
   agents: AgentOutput[];
   workspace: WorkspaceItem[];

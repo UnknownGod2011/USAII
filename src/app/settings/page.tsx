@@ -7,7 +7,7 @@ import { useState } from "react";
 export default function SettingsPage() {
   const [cleared, setCleared] = useState(false);
   function clearContext() {
-    ["launchpilot-user", "launchpilot-profile", "launchpilot-brief"].forEach((key) => localStorage.removeItem(key));
+    ["launchpilot-user", "launchpilot-profile", "launchpilot-brief", "launchpilot-interview"].forEach((key) => localStorage.removeItem(key));
     setCleared(true);
   }
   return (

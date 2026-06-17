@@ -14,6 +14,9 @@ export function Nav() {
         <Link className="rounded-full px-3 py-2 hover:bg-white/80" href="/dashboard">
           Workspace
         </Link>
+        <Link className="rounded-full px-3 py-2 hover:bg-white/80" href="/profile">
+          Profile
+        </Link>
         <Link className="rounded-full px-3 py-2 hover:bg-white/80" href="/settings">
           Privacy
         </Link>

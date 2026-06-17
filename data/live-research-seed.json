@@ -1,0 +1,77 @@
+{
+  "updatedAt": "2026-06-17T10:26:29.245Z",
+  "note": "Live public data snapshot used by LaunchPilot's RAG/research layer when available.",
+  "worldBankIndiaNewBusinesses": [
+    {
+      "indicator": {
+        "id": "IC.BUS.NREG",
+        "value": "New businesses registered (number)"
+      },
+      "country": {
+        "id": "IN",
+        "value": "India"
+      },
+      "countryiso3code": "IND",
+      "date": "2022",
+      "value": 173114,
+      "unit": "",
+      "obs_status": "",
+      "decimal": 0
+    },
+    {
+      "indicator": {
+        "id": "IC.BUS.NREG",
+        "value": "New businesses registered (number)"
+      },
+      "country": {
+        "id": "IN",
+        "value": "India"
+      },
+      "countryiso3code": "IND",
+      "date": "2021",
+      "value": 167606,
+      "unit": "",
+      "obs_status": "",
+      "decimal": 0
+    }
+  ],
+  "hackerNewsFounderValidationSignals": [
+    {
+      "title": "Show HN: Merchpath Curated swag platform for startups",
+      "url": "https://www.merchpath.co",
+      "points": 1
+    }
+  ],
+  "githubStartupValidationRepos": [
+    {
+      "fullName": "aspnetrun/run-aspnetcore-basics",
+      "url": "https://github.com/aspnetrun/run-aspnetcore-basics",
+      "stars": 232,
+      "description": "Implementation of Real-World example in One Solution - One Project for web application development with Asp.Net Core & EF.Core. Only one web application project which used aspnetcore components; razor pages, middlewares, dependency injection, configuration, logging. To create websites with minimum implementation of asp.net core based on HTML5, CSS, and JavaScript. You can use this boilerplate for fast implementation, minimum development, bootstrap your idea, create Minimum Viable Product (MVP), idea validation, startup development implementation for a limited time and limited resources with using latest asp.net core and entity framework core."
+    },
+    {
+      "fullName": "gruz0/checkmvp",
+      "url": "https://github.com/gruz0/checkmvp",
+      "stars": 37,
+      "description": "Validate Your Product or Startup Idea Quickly"
+    },
+    {
+      "fullName": "aspnetrun/run-aspnetcore-basics_retired",
+      "url": "https://github.com/aspnetrun/run-aspnetcore-basics_retired",
+      "stars": 18,
+      "description": "One Solution - One Project for web application development with Asp.Net Core & EF.Core. Only one web application project which used aspnetcore components; razor pages, middlewares, dependency injection, configuration, logging. To create websites with minimum implementation of asp.net core based on HTML5, CSS, and JavaScript. You can use this boilerplate for fast implementation, minimum development, bootstrap your idea, create Minimum Viable Product (MVP), idea validation, startup development implementation for a limited time and limited resources with using latest asp.net core and entity framework core."
+    },
+    {
+      "fullName": "danieleschmidt/agentic-startup-studio",
+      "url": "https://github.com/danieleschmidt/agentic-startup-studio",
+      "stars": 5,
+      "description": "Vision: Automate the entire early stage startup loop ideation, validation, MVP delivery, go to market, and kill or pivot decisions using a swarm of open source AI agents."
+    },
+    {
+      "fullName": "Amiteshchoudhary/Autonomous-AI-Startup-Builder--A-multi-agent-AI-system",
+      "url": "https://github.com/Amiteshchoudhary/Autonomous-AI-Startup-Builder--A-multi-agent-AI-system",
+      "stars": 4,
+      "description": "An Autonomous AI Startup Builder is a multi-agent AI system that can ideate, validate, design, and prototype a startup autonomously by performing market research, technical planning, MVP generation, and business evaluation using agentic reasoning and machine learning."
+    }
+  ]
+}

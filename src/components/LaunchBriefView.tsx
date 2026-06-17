@@ -3,7 +3,7 @@
 import { Badge } from "@/components/Badge";
 import { copilotReply } from "@/lib/agents";
 import type { LaunchBrief } from "@/lib/types";
-import { Download, FileText, MessageCircle, ShieldCheck, Sparkles, Target } from "lucide-react";
+import { Download, FileText, MessageCircle, ShieldCheck, Sparkles, Target, ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 
 function downloadFile(name: string, content: string, type: string) {
@@ -92,24 +92,24 @@ export function LaunchBriefView({ brief }: { brief: LaunchBrief }) {
             </div>
             <Badge label={brief.readinessLabel} />
           </div>
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            <div className="rounded-2xl border border-stone-200 bg-white/70 p-4">
-              <p className="text-xs text-stone-500">Strongest point</p>
-              <p className="mt-2 font-medium text-stone-900">{brief.strongestPoint}</p>
+          <div className="mt-6 grid gap-6 md:grid-cols-[180px_1fr]">
+            <div className="rounded-full border border-stone-200 bg-white/75 p-5 text-center">
+              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Founder fit</p>
+              <p className="mt-2 text-5xl font-semibold tracking-tight text-stone-950">{brief.founderScore.overall}</p>
+              <p className="mt-1 text-xs text-stone-500">coaching score</p>
             </div>
-            <div className="rounded-2xl border border-stone-200 bg-white/70 p-4">
-              <p className="text-xs text-stone-500">Weakest point</p>
-              <p className="mt-2 font-medium text-stone-900">{brief.weakestPoint}</p>
-            </div>
-            <div className="rounded-2xl border border-stone-200 bg-white/70 p-4">
-              <p className="text-xs text-stone-500">What not to do yet</p>
-              <p className="mt-2 font-medium text-stone-900">Do not chase VC outreach or dropout decisions before validation.</p>
+            <div className="space-y-3 text-sm leading-6 text-stone-700">
+              <p><strong className="text-stone-950">Strongest point:</strong> {brief.strongestPoint}</p>
+              <p><strong className="text-stone-950">Weakest point:</strong> {brief.weakestPoint}</p>
+              <p><strong className="text-stone-950">Do not do yet:</strong> Do not chase VC outreach, hiring, or dropout decisions before validation.</p>
+              <p className="text-xs text-stone-500">{brief.founderScore.notes.join(" ")}</p>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
-          <article className="premium-card rounded-[28px] p-5">
+        <section className="glass rounded-[28px] p-6">
+          <div className="grid gap-6 md:grid-cols-[1.2fr_0.8fr]">
+            <article>
             <div className="flex items-center gap-2">
               <Target className="h-5 w-5 text-emerald-600" />
               <h2 className="font-semibold text-stone-950">First real step</h2>
@@ -123,27 +123,34 @@ export function LaunchBriefView({ brief }: { brief: LaunchBrief }) {
               ))}
             </div>
           </article>
-          <article className="rounded-[28px] bg-amber-100/80 p-5 shadow-sm">
+          <article className="rounded-[24px] bg-amber-100/80 p-5 shadow-sm">
             <h2 className="font-semibold text-stone-950">Founder Reality Check</h2>
             <p className="mt-3 text-sm leading-6 text-stone-700">
               Readiness: {brief.readinessLabel}. This is a stage label, not a success score or funding prediction.
             </p>
             <p className="mt-3 text-sm leading-6 text-stone-700">Next validation task: {brief.nextValidationTask}</p>
           </article>
+          </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2">
+        <section className="glass rounded-[28px] p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Agent work</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-stone-950">Research agents and generated plans</h2>
+          <div className="mt-4 divide-y divide-stone-200">
           {brief.agents.map((agent) => (
-            <article key={agent.name} className="premium-card rounded-[28px] p-5">
-              <div className="flex items-center justify-between gap-3">
+            <details key={agent.name} className="group py-4">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
                 <div>
                   <h2 className="font-semibold text-stone-950">{agent.name}</h2>
                   <p className="text-sm text-stone-500">{agent.role}</p>
                 </div>
-                <Badge label={agent.label} />
-              </div>
+                <div className="flex items-center gap-2">
+                  <Badge label={agent.label} />
+                  <ChevronDown className="h-4 w-4 text-stone-400 transition group-open:rotate-180" />
+                </div>
+              </summary>
               <p className="mt-4 text-sm leading-6 text-stone-700">{agent.finding}</p>
-              <div className="mt-4 rounded-2xl bg-stone-50 p-4 text-sm text-stone-600">
+              <div className="mt-4 rounded-2xl bg-white/70 p-4 text-sm text-stone-600">
                 <p className="font-medium text-stone-900">Recommendation: {agent.reasoning.recommendation}</p>
                 <p className="mt-2">Why: {agent.reasoning.why}</p>
                 <p className="mt-2">Evidence used: {agent.reasoning.evidenceUsed.join("; ")}</p>
@@ -151,24 +158,37 @@ export function LaunchBriefView({ brief }: { brief: LaunchBrief }) {
                 <p className="mt-2">Confidence: {agent.reasoning.confidence}</p>
                 <p className="mt-2">What could be wrong: {agent.reasoning.whatCouldBeWrong}</p>
                 <p className="mt-2">How to validate: {agent.reasoning.howToValidate}</p>
+                {!!agent.plan?.length && (
+                  <ol className="mt-3 space-y-1">
+                    {agent.plan.map((item, index) => <li key={item}>{index + 1}. {item}</li>)}
+                  </ol>
+                )}
               </div>
-            </article>
+            </details>
           ))}
+          </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2">
+        <section className="glass rounded-[28px] p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Operating memo</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-stone-950">Vague idea {"->"} structured plan {"->"} first real step</h2>
+          <div className="mt-4 divide-y divide-stone-200">
           {brief.workspace.map((item) => (
-            <article key={item.id} className="premium-card rounded-[24px] p-5">
-              <div className="flex items-start justify-between gap-3">
+            <details key={item.id} className="group py-4" open={["bottleneck", "roadmap", "reality"].includes(item.id)}>
+              <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">{item.type}</p>
                   <h3 className="mt-2 font-semibold text-stone-950">{item.title}</h3>
                 </div>
-                <Badge label={item.label} />
-              </div>
+                <div className="flex items-center gap-2">
+                  <Badge label={item.label} />
+                  <ChevronDown className="h-4 w-4 text-stone-400 transition group-open:rotate-180" />
+                </div>
+              </summary>
               <p className="mt-3 whitespace-pre-line text-sm leading-6 text-stone-600">{item.content}</p>
-            </article>
+            </details>
           ))}
+          </div>
         </section>
       </main>
 

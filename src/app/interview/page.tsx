@@ -6,19 +6,40 @@ import { generateLaunchBrief, problemDiscoveryCards } from "@/lib/agents";
 import { isIrrelevantFounderQuestion, redirectMessage } from "@/lib/guardrails";
 import { demoProfile, emptyProfile } from "@/lib/seed";
 import type { FounderProfile } from "@/lib/types";
-import { ArrowRight, CheckCircle2, ClipboardList, Compass, Search } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardList, Compass, Mic, MicOff, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
 
 const questions = [
-  "What should I call you?",
-  "Where are you building from?",
+  "What's your name?",
+  "How old are you, and which country/city are you building from?",
+  "Are you a student, working professional, or exploring independently?",
+  "Do you already have a startup idea, or are you still exploring?",
   "How many hours per week can you realistically spend?",
-  "What is your rough idea, or say 'no idea yet'?",
+  "What skills do you currently have?",
+  "What is your rough idea? If you have no idea yet, say 'no idea yet'.",
   "Who do you think has this problem?",
   "What evidence do you already have?",
+  "What budget or resources can you use right now?",
+  "Would you be willing to learn new skills or complete courses?",
   "What would make the next 30 days successful?",
 ];
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: { results: SpeechRecognitionResultList }) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechWindow = Window & {
+  SpeechRecognition?: new () => BrowserSpeechRecognition;
+  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+};
 
 function InterviewInner() {
   const router = useRouter();
@@ -26,8 +47,10 @@ function InterviewInner() {
   const mode = params.get("mode") || "chat";
   const [step, setStep] = useState(0);
   const [input, setInput] = useState("");
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const [messages, setMessages] = useState<string[]>([
-    "Hey, ready to turn your idea into something real? I'll ask a few focused questions about your idea, skills, time, budget, and current stage. Then LaunchPilot will research, map risks, and build your execution plan.",
+    "Hey there! Ready to build the next big thing? Let's start with you first. I will ask a few focused questions about your goals, skills, time, budget, current stage, and ambition. Then real research agents will build your startup roadmap.",
   ]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const noIdea = useMemo(() => Object.values(answers).join(" ").toLowerCase().includes("no idea"), [answers]);
@@ -54,26 +77,79 @@ function InterviewInner() {
 
   function buildProfile(useDemo = false): FounderProfile {
     if (useDemo) return demoProfile;
-    if (noIdea) return { ...emptyProfile, name: answers[questions[0]] || emptyProfile.name, location: answers[questions[1]] || emptyProfile.location };
+    const skillText = answers[questions[5]] || "";
+    const skills = skillText
+      .split(/,|and|\n/)
+      .map((skill) => skill.trim())
+      .filter(Boolean);
+    if (noIdea) {
+      return {
+        ...emptyProfile,
+        name: answers[questions[0]] || emptyProfile.name,
+        location: answers[questions[1]] || emptyProfile.location,
+        status: answers[questions[2]] || emptyProfile.status,
+        hoursPerWeek: Number.parseInt(answers[questions[4]] || "6", 10) || 6,
+        skills: skills.length ? skills : emptyProfile.skills,
+        budget: answers[questions[9]] || emptyProfile.budget,
+        willingnessToLearn: answers[questions[10]] || emptyProfile.willingnessToLearn,
+        success30Days: answers[questions[11]] || emptyProfile.success30Days,
+      };
+    }
     return {
       ...demoProfile,
       name: answers[questions[0]] || demoProfile.name,
       location: answers[questions[1]] || demoProfile.location,
-      hoursPerWeek: Number.parseInt(answers[questions[2]] || "10", 10) || 10,
-      rawIdea: answers[questions[3]] || demoProfile.rawIdea,
-      ideaStage: (answers[questions[3]] || "").toLowerCase().includes("no idea") ? "no idea yet" : "rough idea",
-      targetUser: answers[questions[4]] || demoProfile.targetUser,
-      evidence: [answers[questions[5]] || "no formal user validation yet"],
-      success30Days: answers[questions[6]] || demoProfile.success30Days,
+      status: answers[questions[2]] || demoProfile.status,
+      ideaStage: (answers[questions[3]] || answers[questions[6]] || "").toLowerCase().includes("no idea") ? "no idea yet" : "rough idea",
+      hoursPerWeek: Number.parseInt(answers[questions[4]] || "10", 10) || 10,
+      skills: skills.length ? skills : demoProfile.skills,
+      rawIdea: answers[questions[6]] || demoProfile.rawIdea,
+      targetUser: answers[questions[7]] || demoProfile.targetUser,
+      evidence: [answers[questions[8]] || "no formal user validation yet"],
+      budget: answers[questions[9]] || demoProfile.budget,
+      willingnessToLearn: answers[questions[10]] || demoProfile.willingnessToLearn,
+      success30Days: answers[questions[11]] || demoProfile.success30Days,
     };
   }
 
   function finish(useDemo = false) {
     const profile = buildProfile(useDemo);
-    const brief = generateLaunchBrief(profile);
     localStorage.setItem("launchpilot-profile", JSON.stringify(profile));
-    localStorage.setItem("launchpilot-brief", JSON.stringify(brief));
-    router.push("/dashboard");
+    localStorage.setItem("launchpilot-interview", JSON.stringify({ answers, messages }));
+    localStorage.setItem("launchpilot-brief", JSON.stringify(generateLaunchBrief(profile)));
+    router.push("/research");
+  }
+
+  function toggleVoice() {
+    const SpeechRecognition = (window as SpeechWindow).SpeechRecognition || (window as SpeechWindow).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setMessages((prev) => [...prev, "Voice is not available in this browser. Text mode is ready and uses the same founder workflow."]);
+      return;
+    }
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript || "")
+        .join(" ")
+        .trim();
+      if (transcript) setInput(transcript);
+    };
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => {
+      setListening(false);
+      setMessages((prev) => [...prev, "Voice capture hit an error. Continue in text mode; your workflow is unchanged."]);
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    recognition.start();
   }
 
   return (
@@ -87,6 +163,11 @@ function InterviewInner() {
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950">Warm, short, focused.</h1>
             </div>
             <Badge label={mode === "voice" ? "Voice fallback ready" : "Text mode"} />
+          </div>
+          <div className="mt-4 rounded-2xl bg-stone-950 px-4 py-3 text-sm leading-6 text-white">
+            {step < questions.length
+              ? questions[step]
+              : "Perfect. I have enough context to create your personalized startup roadmap with live agents."}
           </div>
           <div className="mt-6 min-h-[420px] space-y-3 rounded-[26px] bg-white/90 p-4 shadow-inner">
             {messages.map((message, index) => (
@@ -103,6 +184,12 @@ function InterviewInner() {
           </div>
           <div className="mt-4 flex gap-2">
             <input className="min-w-0 flex-1 rounded-full border border-stone-200 bg-white px-4 py-3 outline-none focus:border-stone-400 focus:ring-4 focus:ring-stone-200" value={input} onChange={(e) => setInput(e.target.value)} placeholder={step < questions.length ? questions[step] : "Ask or finish"} onKeyDown={(e) => e.key === "Enter" && submitAnswer()} />
+            {mode === "voice" && (
+              <button className={`inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold ${listening ? "bg-red-600 text-white" : "border border-stone-200 bg-white text-stone-900"}`} onClick={toggleVoice} aria-label={listening ? "Stop voice capture" : "Start voice capture"}>
+                {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                <span className="hidden sm:inline">{listening ? "Stop voice" : "Start voice"}</span>
+              </button>
+            )}
             <button className="rounded-full bg-stone-950 px-5 py-3 text-sm font-semibold text-white" onClick={submitAnswer}>Send</button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">

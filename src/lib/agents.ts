@@ -1,6 +1,6 @@
 import { isIrrelevantFounderQuestion, redirectMessage, sanitizeAdvisorResponse } from "./guardrails";
 import { retrieveSources, sourceRegistry } from "./rag";
-import type { AgentOutput, FounderProfile, LaunchBrief, ReasoningCard, WorkspaceItem } from "./types";
+import type { AgentOutput, FounderProfile, LaunchBrief, ReasoningCard, ResearchPack, WorkspaceItem } from "./types";
 
 const now = () => new Date().toISOString();
 const isIndia = (profile: FounderProfile) => /india|bengaluru|delhi|mumbai|pune|hyderabad|chennai/i.test(profile.location);
@@ -63,7 +63,49 @@ export function problemDiscoveryCards(profile: FounderProfile) {
   ];
 }
 
-export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
+function fallbackResearch(profile: FounderProfile): ResearchPack {
+  return {
+    mode: "fallback",
+    fetchedAt: now(),
+    logs: [
+      "Loaded deterministic source registry.",
+      "Used framework reasoning because live research was not requested.",
+      "Marked market claims as inferred or needing validation.",
+    ],
+    sources: sourceRegistry,
+    competitors: ["Manual mentoring from college incubators", "Generic AI chatbots and pitch generators", "Startup templates, Notion workspaces, and accelerator worksheets"],
+    marketSignals: ["No live market data in this run. Treat all market claims as hypotheses until user interviews confirm them."],
+    opportunities: isIndia(profile)
+      ? ["Startup India / DPIIT / MAARG may be relevant after official eligibility is verified."]
+      : ["University incubators, public grants, and founder office hours may be better than investor outreach."],
+    skillResources: ["USAII learning path: customer discovery, MVP design, no-code/AI prototyping, founder communication."],
+  };
+}
+
+function founderScore(profile: FounderProfile, validationWeak: boolean, noIdea: boolean) {
+  const skillDepth = Math.min(90, 45 + profile.skills.length * 8);
+  const time = profile.hoursPerWeek >= 10 ? 72 : profile.hoursPerWeek >= 5 ? 58 : 42;
+  const feasibility = noIdea ? 46 : validationWeak ? 62 : 74;
+  const marketOpportunity = noIdea ? 50 : validationWeak ? 64 : 72;
+  const executionDifficulty = profile.skills.some((skill) => /react|code|ai|technical|engineering/i.test(skill)) ? 54 : 72;
+  const founderFit = Math.round((skillDepth + time) / 2);
+  const overall = Math.round((feasibility + marketOpportunity + (100 - executionDifficulty) + founderFit) / 4);
+  return {
+    feasibility,
+    marketOpportunity,
+    executionDifficulty,
+    founderFit,
+    overall,
+    label: noIdea ? "Explore more" : validationWeak ? "Promising, validation required" : "Prototype path is plausible",
+    notes: [
+      "This is a coaching score, not a success prediction.",
+      validationWeak ? "The score is capped until real user evidence exists." : "The score improves because the founder has some traction or validation.",
+      executionDifficulty > 65 ? "Execution is harder because the current skill set may not cover MVP building yet." : "Execution is manageable if scope stays narrow.",
+    ],
+  };
+}
+
+export function generateLaunchBrief(profile: FounderProfile, research = fallbackResearch(profile)): LaunchBrief {
   const noIdea = profile.ideaStage === "no idea yet";
   const validationWeak = hasNoValidation(profile);
   const bottleneck = noIdea
@@ -88,18 +130,14 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
     ? "Interview 8 people from one accessible community and collect the top repeated problem before choosing an idea."
     : `Interview 10 ${profile.targetUser.toLowerCase()} this week. Success signal: at least 5 ask to see or try the prototype.`;
 
-  const competitors = [
+  const score = founderScore(profile, validationWeak, noIdea);
+  const competitors = research.competitors.length ? research.competitors : [
     "Manual mentoring from college incubators",
     "Generic AI chatbots and pitch generators",
     "Startup templates, Notion workspaces, and accelerator worksheets",
   ];
   const opportunities = [
-    ...(isIndia(profile)
-      ? [
-          "Check Startup India / DPIIT recognition only when the venture has a clear entity and eligibility fit.",
-          "Explore MAARG mentorship for guidance, not as proof of demand.",
-        ]
-      : ["Check local university incubators, public grants, and founder office hours before fundraising."]),
+    ...research.opportunities,
     "Use hackathon communities and campus clubs as the first user interview channel.",
   ];
   const assumptions = [
@@ -146,6 +184,7 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
     "User interviewing without leading questions",
     "Basic landing page or no-code prototype shipping",
     "Simple analytics and evidence logging",
+    ...research.skillResources.slice(0, 2),
   ];
   const pitchAssets = {
     oneLinePitch: `LaunchPilot helps ${profile.targetUser.toLowerCase()} turn vague startup ideas into validated first steps.`,
@@ -175,6 +214,7 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
       name: "Lead Research Agent",
       role: "Decides what needs to be checked",
       status: "Complete",
+      liveSteps: ["Read founder profile", "Selected current bottleneck", "Capped future roadmap detail until validation improves"],
       finding: `The plan should focus on ${bottleneck.toLowerCase()} before broader roadmap work.`,
       whyItMatters: "The founder has limited time and needs the next constraint, not a fake 12-month plan.",
       label: "Framework-based",
@@ -187,12 +227,19 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "High",
         nextValidationTask,
       ),
+      plan: [
+        "Keep the next 24 hours focused on one target segment.",
+        "Do not expand to fundraising, global scaling, or complex automation yet.",
+        "Re-run research after 10 interviews so the roadmap reflects evidence.",
+      ],
+      sources: research.sources.slice(0, 4),
     },
     {
       name: "Competitor Subagent",
       role: "Checks alternatives",
       status: "Complete",
-      finding: "The main alternatives are mentors, generic AI tools, templates, and manual accelerator worksheets.",
+      liveSteps: ["Searched GitHub/public alternatives", "Compared adjacent tools", "Separated true competitors from substitutes"],
+      finding: `Relevant alternatives found: ${competitors.slice(0, 4).join(", ")}.`,
       whyItMatters: "LaunchPilot must win on structured context, evidence labels, and first-step execution.",
       label: "Inferred",
       confidence: "Medium",
@@ -204,11 +251,18 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "Medium",
         "Ask interviewees what they use today and what feels missing.",
       ),
+      plan: [
+        "Ask users what they currently use instead.",
+        "Write a one-sentence wedge against the strongest substitute.",
+        "Avoid claiming no competition; substitutes are real competition.",
+      ],
+      sources: research.sources.filter((source) => /github|alternative|discussion/i.test(`${source.id} ${source.type}`)).slice(0, 4),
     },
     {
       name: "Pain Point Subagent",
       role: "Looks for user pain signals",
       status: "Complete",
+      liveSteps: ["Searched community/public discussion signals", "Mapped signals to the target user", "Marked weak evidence as needs validation"],
       finding: noIdea
         ? "Problem Discovery Mode should start from communities the founder understands."
         : "The pain is plausible but not proven because formal validation is missing.",
@@ -223,11 +277,18 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "Medium",
         nextValidationTask,
       ),
+      plan: [
+        "Convert each pain signal into an interview question.",
+        "Collect exact quotes before choosing a build direction.",
+        "Treat online discussion as signal, not demand proof.",
+      ],
+      sources: research.sources.filter((source) => source.label === "Community signal").slice(0, 4),
     },
     {
       name: "Opportunity Subagent",
       role: "Finds programs and support",
       status: "Complete",
+      liveSteps: ["Checked country-specific opportunity sources", "Separated mentorship/programs from funding", "Flagged official eligibility checks"],
       finding: opportunities.join(" "),
       whyItMatters: "Non-dilutive help and mentorship are more appropriate than VC outreach at this stage.",
       label: isIndia(profile) ? "Official source" : "Fallback analysis",
@@ -240,11 +301,18 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "Medium",
         "Open official program pages and confirm current eligibility before applying.",
       ),
+      plan: [
+        "Use programs for mentorship and credibility after validation starts.",
+        "Verify eligibility on official pages before applying.",
+        "Keep investor outreach behind user evidence and prototype traction.",
+      ],
+      sources: research.sources.filter((source) => /startup|program|opportunity|world/i.test(`${source.title} ${source.type}`)).slice(0, 4),
     },
     {
       name: "Skill Gap Subagent",
       role: "Maps learning needs",
       status: "Complete",
+      liveSteps: ["Read skills and weekly time", "Mapped gaps against ESCO/USAII learning paths", "Recommended only skills that unlock the next sprint"],
       finding: `Most urgent skills: ${skillGaps.join(", ")}.`,
       whyItMatters: "The founder has only limited weekly hours, so learning must serve validation.",
       label: "Official source",
@@ -257,11 +325,18 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "Medium",
         "After interviews, decide which one skill unlocks the next MVP test.",
       ),
+      plan: [
+        "Learn only what is needed for the next validation sprint.",
+        "If technical skill is weak, use no-code or concierge MVP first.",
+        "Use USAII-style learning modules for customer discovery, AI prototyping, and founder communication.",
+      ],
+      sources: research.sources.filter((source) => /esco|skill|learn|framework/i.test(`${source.id} ${source.type}`)).slice(0, 4),
     },
     {
       name: "Source Quality Agent",
       role: "Labels sources and uncertainty",
       status: "Complete",
+      liveSteps: research.logs,
       finding: "Official programs are labeled separately from inferred and fallback analysis.",
       whyItMatters: "Judges and founders can see what is verified versus what needs validation.",
       label: "Verified",
@@ -274,13 +349,19 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
         "High",
         "Replace fallback findings with fresh official or primary sources when live research is enabled.",
       ),
+      plan: [
+        "Keep official sources, community signals, and fallback analysis visually separate.",
+        "Update the Launch Brief when stronger evidence replaces weak assumptions.",
+        "Never present AI synthesis as proof of market demand.",
+      ],
+      sources: research.sources.slice(0, 6),
     },
   ];
 
   const workspace: WorkspaceItem[] = [
     { id: "founder", type: "Founder Snapshot", title: `${profile.name} - ${profile.status}`, content: `${profile.location}; ${profile.hoursPerWeek} hrs/week; budget ${profile.budget}; skills: ${profile.skills.join(", ")}.`, label: "Inferred", confidence: "High", updatedAt: now() },
     { id: "idea", type: "Refined Idea", title: "Refined Idea", content: refinedIdea, label: "Needs validation", confidence: "Medium", updatedAt: now() },
-    { id: "research", type: "Research Notes", title: "Market Reality", content: "Research mode uses official and framework sources when available, then deterministic fallback analysis with clear labels.", label: "Fallback analysis", confidence: "Medium", updatedAt: now() },
+    { id: "research", type: "Research Notes", title: "Market Reality", content: `${research.mode.toUpperCase()} research run.\n${research.marketSignals.join("\n")}\n${research.aiSummary || ""}`, label: research.mode === "fallback" ? "Fallback analysis" : "Verified", confidence: research.mode === "live" ? "High" : "Medium", updatedAt: now() },
     { id: "competitors", type: "Competitors / Alternatives", title: "Alternatives", content: competitors.join("; "), label: "Inferred", confidence: "Medium", updatedAt: now() },
     { id: "assumptions", type: "Assumptions", title: "Riskiest Assumptions", content: assumptions.join("; "), label: "Needs validation", confidence: "Medium", updatedAt: now() },
     { id: "risks", type: "Risks", title: "Key Risks", content: risks.join("; "), label: "AI may be wrong", confidence: "Medium", updatedAt: now() },
@@ -301,6 +382,7 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
     targetUser: profile.targetUser,
     readinessLabel,
     currentBottleneck: bottleneck,
+    founderScore: score,
     strongestPoint: profile.skills[0] || "Founder access and willingness to learn",
     weakestPoint: validationWeak ? "Validation evidence" : "Distribution clarity",
     nextValidationTask,
@@ -313,7 +395,8 @@ export function generateLaunchBrief(profile: FounderProfile): LaunchBrief {
     skillGaps,
     pitchAssets,
     responsibleAINotes,
-    sources: sourceRegistry,
+    research,
+    sources: research.sources,
     agents,
     workspace,
   };
