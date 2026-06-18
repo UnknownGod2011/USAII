@@ -17,7 +17,6 @@ import {
   saveInterviewState,
   type InterviewState,
 } from "@/lib/intake/interviewState";
-import { extractMultipleFields } from "@/lib/intake/fieldExtractor";
 import { createVoiceProvider, detectAvailableProvider, type IVoiceProvider, type VoiceEvent } from "@/lib/voice/voiceProvider";
 import { createInitialProgress, runResearchEvaluation, type ResearchProgress as ResearchProgressType } from "@/lib/research/researchAgent";
 import { motion } from "framer-motion";
@@ -71,8 +70,7 @@ export default function InterviewVoicePage() {
         break;
 
       case "transcript":
-        if (event.isFinal) {
-          setTranscript(event.text);
+        if (event.isFinal && event.text.trim()) {
           await handleAnswer(event.text);
         } else {
           setTranscript(event.text);
@@ -81,17 +79,16 @@ export default function InterviewVoicePage() {
 
       case "thinking":
         setOrbState("thinking");
-        setStatusText("Checking if the answer is usable...");
+        setStatusText("Processing...");
         break;
 
       case "speaking":
         setOrbState("speaking");
         setStatusText("Speaking...");
-        setMessages((prev) => [...prev, { role: "assistant", content: event.text }]);
         break;
 
       case "error":
-        setStatusText(`Error: ${event.message}`);
+        setStatusText(`Error: ${event.message}. Using text fallback.`);
         setOrbState("idle");
         break;
 
@@ -105,8 +102,10 @@ export default function InterviewVoicePage() {
   const handleAnswer = async (answer: string) => {
     if (!answer.trim()) return;
 
-    // Add user message
-    setMessages((prev) => [...prev, { role: "user", content: answer }]);
+    // Clear transcript
+    setTranscript("");
+
+    // Add user message internally
     setState((s) => addMessage(s, "user", answer));
 
     setOrbState("thinking");
@@ -115,9 +114,6 @@ export default function InterviewVoicePage() {
     // Get current question
     const currentQuestion = CORE_QUESTIONS[currentQuestionIndexRef.current];
     if (!currentQuestion) return;
-
-    // Extract multiple fields if present
-    extractMultipleFields(answer, currentQuestion.field);
 
     // Validate answer
     const validation = await validateAnswer(currentQuestion, answer, {});
@@ -136,23 +132,33 @@ export default function InterviewVoicePage() {
         // Interview complete
         setState((s) => markComplete(s));
         const thankYouMessage = "Thank you for answering the questions. I'm going to carry out a thorough market and feasibility research pass now.";
-        setMessages((prev) => [...prev, { role: "assistant", content: thankYouMessage }]);
+        
+        setMessages([{ role: "assistant", content: thankYouMessage }]);
+        setOrbState("speaking");
+        setStatusText("Speaking...");
 
-        if (voiceProviderRef.current) {
+        // Speak via voice if available
+        if (voiceProviderRef.current && voiceProviderRef.current.getProvider() === "gemini-live") {
           await voiceProviderRef.current.send(thankYouMessage);
         }
 
         // Start research
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await startResearch();
       } else {
         // Ask next question
         const nextQuestion = CORE_QUESTIONS[currentQuestionIndexRef.current];
-        setMessages((prev) => [...prev, { role: "assistant", content: nextQuestion.conversationalVariant }]);
+        setMessages([{ role: "assistant", content: nextQuestion.conversationalVariant }]);
+        setOrbState("speaking");
+        setStatusText("Speaking...");
 
-        if (voiceProviderRef.current) {
+        // Speak via voice if available
+        if (voiceProviderRef.current && voiceProviderRef.current.getProvider() === "gemini-live") {
           await voiceProviderRef.current.send(nextQuestion.conversationalVariant);
         }
 
+        // Return to listening after speaking
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         setOrbState("listening");
         setStatusText("Listening...");
       }
@@ -162,12 +168,17 @@ export default function InterviewVoicePage() {
 
       // Ask follow-up
       const followUpMessage = decision.message || currentQuestion.conversationalVariant;
-      setMessages((prev) => [...prev, { role: "assistant", content: followUpMessage }]);
+      setMessages([{ role: "assistant", content: followUpMessage }]);
+      setOrbState("speaking");
+      setStatusText("Speaking...");
 
-      if (voiceProviderRef.current) {
+      // Speak via voice if available
+      if (voiceProviderRef.current && voiceProviderRef.current.getProvider() === "gemini-live") {
         await voiceProviderRef.current.send(followUpMessage);
       }
 
+      // Return to listening
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       setOrbState("listening");
       setStatusText("Listening...");
     } else if (decision.action === "skip") {
@@ -177,27 +188,32 @@ export default function InterviewVoicePage() {
       if (currentQuestionIndexRef.current >= CORE_QUESTIONS.length) {
         setState((s) => markComplete(s));
         const thankYouMessage = "Thank you. I'm going to run research now.";
-        setMessages((prev) => [...prev, { role: "assistant", content: thankYouMessage }]);
+        setMessages([{ role: "assistant", content: thankYouMessage }]);
+        setOrbState("speaking");
 
-        if (voiceProviderRef.current) {
+        // Speak via voice if available
+        if (voiceProviderRef.current && voiceProviderRef.current.getProvider() === "gemini-live") {
           await voiceProviderRef.current.send(thankYouMessage);
         }
 
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await startResearch();
       } else {
         const skipMessage = "Let's move on for now.";
         const nextQuestion = CORE_QUESTIONS[currentQuestionIndexRef.current];
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: skipMessage },
-          { role: "assistant", content: nextQuestion.conversationalVariant },
-        ]);
+        const combinedMessage = `${skipMessage} ${nextQuestion.conversationalVariant}`;
+        
+        setMessages([{ role: "assistant", content: combinedMessage }]);
+        setOrbState("speaking");
 
-        if (voiceProviderRef.current) {
-          await voiceProviderRef.current.send(`${skipMessage} ${nextQuestion.conversationalVariant}`);
+        // Speak via voice if available
+        if (voiceProviderRef.current && voiceProviderRef.current.getProvider() === "gemini-live") {
+          await voiceProviderRef.current.send(combinedMessage);
         }
 
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         setOrbState("listening");
+        setStatusText("Listening...");
       }
     }
 
@@ -274,63 +290,70 @@ export default function InterviewVoicePage() {
     <main className="shell-bg min-h-screen">
       <Nav />
 
-      <section className="mx-auto max-w-6xl px-5 pb-10">
+      <section className="mx-auto max-w-7xl px-5 pb-10">
         {!evidenceScore ? (
-          <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
-            {/* Left: Voice interface */}
-            <div className="flex flex-col items-center justify-center py-20">
-              <VoiceOrb state={orbState} isActive={isActive} onToggle={toggleVoice} statusText={statusText} />
+          <div className="flex min-h-[calc(100vh-120px)] items-center justify-center">
+            <div className="w-full max-w-4xl">
+              {/* Voice Orb */}
+              <div className="flex flex-col items-center">
+                <VoiceOrb state={orbState} isActive={isActive} onToggle={toggleVoice} statusText={statusText} />
 
-              {/* Progress */}
-              <div className="mt-8 text-center">
-                <p className="text-sm font-semibold text-stone-600">
-                  Question {progress.current} of {progress.total}
-                </p>
-                <div className="mt-2 h-2 w-64 overflow-hidden rounded-full bg-stone-200">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress.percentage}%` }}
-                    transition={{ duration: 0.5 }}
-                  />
-                </div>
-              </div>
-
-              {/* Live transcript */}
-              {transcript && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mt-6 max-w-md rounded-2xl bg-white/90 px-6 py-4 text-center text-sm text-stone-700 shadow-lg"
-                >
-                  &quot;{transcript}&quot;
-                </motion.div>
-              )}
-            </div>
-
-            {/* Right: Conversation log or research progress */}
-            <div className="space-y-4">
-              {researchProgress ? (
-                <ResearchProgress steps={researchProgress.steps} currentStep={researchProgress.currentStep} />
-              ) : (
-                <div className="premium-card rounded-[28px] p-5">
-                  <h2 className="text-lg font-semibold text-stone-950">Conversation</h2>
-                  <div className="mt-4 max-h-[600px] space-y-3 overflow-y-auto">
-                    {messages.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-2xl px-4 py-3 text-sm leading-6 ${
-                          msg.role === "user"
-                            ? "ml-auto max-w-[85%] bg-stone-950 text-white"
-                            : "max-w-[90%] bg-stone-50 text-stone-700"
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
-                    ))}
+                {/* Progress */}
+                <div className="mt-8 text-center">
+                  <p className="text-sm font-semibold text-stone-600">
+                    Question {progress.current} of {progress.total}
+                  </p>
+                  <div className="mt-2 h-2 w-80 overflow-hidden rounded-full bg-stone-200 mx-auto">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progress.percentage}%` }}
+                      transition={{ duration: 0.5 }}
+                    />
                   </div>
                 </div>
-              )}
+
+                {/* Current question */}
+                {messages.length > 0 && messages[messages.length - 1].role === "assistant" && (
+                  <motion.div
+                    key={messages[messages.length - 1].content}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-8 max-w-2xl rounded-3xl bg-gradient-to-br from-violet-50 to-purple-50 p-6 text-center shadow-lg"
+                  >
+                    <p className="text-lg leading-8 text-stone-900">{messages[messages.length - 1].content}</p>
+                  </motion.div>
+                )}
+
+                {/* Live transcript */}
+                {transcript && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-6 max-w-xl rounded-2xl bg-white/90 px-6 py-4 text-center text-base text-stone-700 shadow-lg"
+                  >
+                    &quot;{transcript}&quot;
+                  </motion.div>
+                )}
+
+                {/* Research progress */}
+                {researchProgress && (
+                  <div className="mt-8 w-full max-w-2xl">
+                    <ResearchProgress steps={researchProgress.steps} currentStep={researchProgress.currentStep} />
+                  </div>
+                )}
+
+                {/* Instructions */}
+                {!isActive && !researchProgress && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-8 max-w-xl rounded-2xl bg-white/60 px-6 py-4 text-center text-sm leading-6 text-stone-600"
+                  >
+                    Tap the orb to start your voice interview. I&apos;ll ask questions and listen to your answers naturally.
+                  </motion.div>
+                )}
+              </div>
             </div>
           </div>
         ) : (
