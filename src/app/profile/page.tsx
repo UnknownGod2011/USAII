@@ -1,19 +1,61 @@
 "use client";
 
 import { Nav } from "@/components/Nav";
-import { demoProfile } from "@/lib/seed";
 import type { FounderProfile } from "@/lib/types";
 import { Save, Trash2, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<FounderProfile>(demoProfile);
+  const [profile, setProfile] = useState<FounderProfile>({
+    name: "",
+    location: "",
+    status: "",
+    hoursPerWeek: 0,
+    budget: "",
+    skills: [],
+    teamStatus: "",
+    ideaStage: "rough idea",
+    rawIdea: "",
+    targetUser: "",
+    whyItMatters: "",
+    evidence: [],
+    traction: "",
+    willingnessToLearn: "",
+    riskTolerance: "",
+    success30Days: "",
+  });
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    const id = window.setTimeout(() => {
+    const id = window.setTimeout(async () => {
       const existing = localStorage.getItem("launchpilot-profile");
-      if (existing) setProfile(JSON.parse(existing));
+      if (existing) {
+        setProfile(JSON.parse(existing));
+        return;
+      }
+      const response = await fetch("/api/account/data");
+      const data = await response.json();
+      const intake = data?.intakes?.at(-1);
+      if (!intake) return;
+      setProfile({
+        name: intake.name,
+        location: [intake.locationCity, intake.locationCountry].filter(Boolean).join(", "),
+        status: intake.status,
+        hoursPerWeek: intake.hoursPerWeek,
+        budget: intake.budget,
+        skills: JSON.parse(intake.skillsJson || "[]"),
+        teamStatus: intake.teamStatus,
+        ideaStage: intake.stage === "MVP exists" || intake.stage === "users exist" || intake.stage === "revenue exists" ? "MVP already exists" : intake.stage,
+        rawIdea: intake.rawIdea,
+        targetUser: intake.targetUser,
+        whyItMatters: intake.problem,
+        currentAlternatives: intake.alternatives,
+        evidence: [intake.evidenceLevel],
+        traction: intake.evidenceLevel,
+        willingnessToLearn: "Open to learning",
+        riskTolerance: "Not yet assessed",
+        success30Days: intake.thirtyDayGoal,
+      });
     }, 0);
     return () => window.clearTimeout(id);
   }, []);
@@ -31,7 +73,7 @@ export default function ProfilePage() {
 
   function clear() {
     ["launchpilot-user", "launchpilot-profile", "launchpilot-brief", "launchpilot-interview"].forEach((key) => localStorage.removeItem(key));
-    setProfile(demoProfile);
+    setProfile((current) => ({ ...current, name: "", location: "", status: "", hoursPerWeek: 0, budget: "", skills: [], rawIdea: "", targetUser: "", success30Days: "" }));
     setSaved(true);
   }
 
@@ -46,7 +88,7 @@ export default function ProfilePage() {
                 <UserRound className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Saved founder context</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Founder profile notes</p>
                 <h1 className="text-3xl font-semibold tracking-tight text-stone-950">Founder profile</h1>
               </div>
             </div>
@@ -76,7 +118,7 @@ export default function ProfilePage() {
           </div>
 
           <p className="mt-5 text-sm text-stone-600">
-            {saved ? "Saved. Re-run research to regenerate the roadmap from this context." : "Changes stay local until you save."}
+            {saved ? "Saved in this browser. Complete a new interview to regenerate persisted research and the workspace." : "The latest persisted intake loads automatically. Edits on this page are browser-local notes."}
           </p>
         </div>
       </section>

@@ -12,7 +12,7 @@ type ResearchProgressProps = {
 export function ResearchProgress({ steps, currentStep }: ResearchProgressProps) {
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold text-stone-950">Research in progress</h2>
+      <h2 className="text-xl font-semibold text-stone-950">Research in progress <span className="text-sm font-normal text-stone-500">{typeof currentStep === "number" ? `${Math.min(currentStep + 1, steps.length)} of ${steps.length}` : ""}</span></h2>
 
       <div className="space-y-3">
         {steps.map((step, index) => {

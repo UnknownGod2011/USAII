@@ -1,40 +1,15 @@
 # Workspace Architecture
 
-LaunchPilot uses a persistent Launch Brief Workspace as the project brain.
+After approval, LaunchPilot reads the latest persisted `ResearchRun`; it does not trust client-supplied score or source data. The run contains the researched founder snapshot, query plan, sources, evidence claims, operational logs, research pack, and final Evidence Score.
 
-## Workspace Item Types
+Approval writes:
 
-- Founder Snapshot
-- Refined Idea
-- Research Notes
-- Competitors / Alternatives
-- Assumptions
-- Risks
-- MVP Plan
-- Current Bottleneck
-- Founder Reality Check
-- Roadmap
-- Pitch Assets
-- Opportunity Cards
-- Saved Decisions
-- Sources
+- one Launch Brief summary
+- fourteen separate workspace records
+- six evidence-linked agent runs
 
-## Write Path
+The sections are Founder Snapshot, Finalized Idea, Research Verdict, Competitors, Assumptions, Risks, MVP, Current Bottleneck, Founder Reality Check, Roadmap, Opportunities, Pitch Assets, Saved Decisions, and Sources.
 
-The founder interview creates a `FounderProfile`. The agent engine converts that profile into a `LaunchBrief` and writes structured `WorkspaceItem` records.
+The dashboard reconstructs the report from these records and renders evidence bars, a competitor matrix, risk register, MVP scope, roadmap timeline, confidence labels, source footnotes, agent audit, and pitch assets. Copilot retrieves relevant workspace records and research sources for every question. Copy, Markdown, and JSON exports use this same reconstructed workspace.
 
-## Read Path
-
-The dashboard, Copilot, and exports read from the workspace cards. This keeps important decisions visible after chat scrolls away.
-
-## Clearing Context
-
-The Privacy page clears local storage keys:
-
-- `launchpilot-user`
-- `launchpilot-profile`
-- `launchpilot-brief`
-
-## Production Path
-
-For production, replace browser local storage with a database table for profiles, workspace items, sources, agent outputs, and chat history.
+When a researched idea changes, old workspace records are marked stale before replacements are written. Settings can export or clear all user-scoped context.

@@ -46,9 +46,9 @@ export default function Home() {
               <Link className="inline-flex items-center gap-2 rounded-full bg-stone-950 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-stone-300 hover:-translate-y-0.5" href="/login">
                 Start Founder Interview <Sparkles className="h-4 w-4" />
               </Link>
-              <Link className="rounded-full border border-stone-200 bg-white/80 px-6 py-3 text-sm font-semibold text-stone-900 hover:bg-white" href="/dashboard?demo=1">
-              Try Demo User
-            </Link>
+              <Link className="rounded-full border border-stone-200 bg-white/80 px-6 py-3 text-sm font-semibold text-stone-900 hover:bg-white" href="/login">
+                Open saved workspace
+              </Link>
               <span className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-stone-600">
                 <Lock className="h-4 w-4" /> Privacy mode available
               </span>

@@ -24,6 +24,7 @@ export type FounderProfile = {
   rawIdea: string;
   targetUser: string;
   whyItMatters: string;
+  currentAlternatives?: string;
   evidence: string[];
   traction: string;
   willingnessToLearn: string;
@@ -39,6 +40,12 @@ export type Source = {
   label: EvidenceLabel;
   snippet?: string;
   fetchedAt?: string;
+  provider?: "gemini_grounding" | "google" | "tavily" | "exa" | "serpapi" | "public_api" | "direct" | "offline";
+  query?: string;
+  verified?: boolean;
+  relevanceScore?: number;
+  qualityScore?: number;
+  limitation?: string;
 };
 
 export type ReasoningCard = {
@@ -73,6 +80,7 @@ export type WorkspaceItem = {
   label: EvidenceLabel;
   confidence: "Low" | "Medium" | "High";
   updatedAt: string;
+  sourceIds?: string[];
 };
 
 export type AgentOutput = {
@@ -87,6 +95,7 @@ export type AgentOutput = {
   reasoning: ReasoningCard;
   plan?: string[];
   sources?: Source[];
+  evidenceClaimIds?: string[];
 };
 
 export type FounderScore = {
@@ -103,7 +112,15 @@ export type ResearchPack = {
   mode: "live" | "hybrid" | "fallback";
   fetchedAt: string;
   logs: string[];
+  plan: {
+    id: string;
+    query: string;
+    category: "problem" | "demand" | "competitor" | "pricing" | "opportunity" | "feasibility";
+    purpose: string;
+    preferredSources: string[];
+  }[];
   sources: Source[];
+  evidenceClaims: import("./intake/schema").EvidenceClaim[];
   competitors: string[];
   marketSignals: string[];
   opportunities: string[];
@@ -145,6 +162,7 @@ export type LaunchBrief = {
   };
   responsibleAINotes: string[];
   research: ResearchPack;
+  evidenceScore?: import("./intake/schema").EvidenceScore;
   sources: Source[];
   agents: AgentOutput[];
   workspace: WorkspaceItem[];

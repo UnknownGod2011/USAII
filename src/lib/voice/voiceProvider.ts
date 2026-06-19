@@ -7,7 +7,8 @@ export type VoiceProvider = "gemini-live" | "web-speech" | "text-fallback";
 
 export type VoiceConfig = {
   provider: VoiceProvider;
-  apiKey?: string;
+  ephemeralToken?: string;
+  model?: string;
   language?: string;
   voice?: string;
 };
@@ -32,26 +33,34 @@ export interface IVoiceProvider {
   getProvider(): VoiceProvider;
 }
 
+export const voiceStoragePolicy = {
+  rawAudioStored: false,
+  transcriptStored: true,
+} as const;
+
+export function liveClientConfig(token: string, model = "gemini-3.1-flash-live-preview"): VoiceConfig {
+  return { provider: "gemini-live", ephemeralToken: token, model };
+}
+
+export function selectVoiceProvider(capabilities: {
+  geminiLiveAvailable: boolean;
+  webSpeechAvailable: boolean;
+}): VoiceProvider {
+  if (capabilities.geminiLiveAvailable) return "gemini-live";
+  if (capabilities.webSpeechAvailable) return "web-speech";
+  return "text-fallback";
+}
+
 /**
  * Detect which voice provider is available
  */
 export function detectAvailableProvider(): VoiceProvider {
-  // Check for Gemini API key
   if (typeof window !== "undefined") {
-    const hasGeminiKey = !!process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    if (hasGeminiKey) {
-      return "gemini-live";
-    }
-
-    // Check for Web Speech API
     const SpeechRecognition =
       (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition ||
       (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      return "web-speech";
-    }
+    return selectVoiceProvider({ geminiLiveAvailable: false, webSpeechAvailable: Boolean(SpeechRecognition) });
   }
-
   return "text-fallback";
 }
 

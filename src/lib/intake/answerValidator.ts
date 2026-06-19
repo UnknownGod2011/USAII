@@ -1,392 +1,129 @@
 import type { Question } from "./questions";
 import type { AnswerValidation } from "./schema";
 
-/**
- * AI-powered answer quality validator
- * This validates whether user answers are meaningful, usable, and not garbage
- */
+const lowEffort = /^(?:[0-9]+|[.!?,_-]+|idk|dunno|random|aaa+|test|yes|no|maybe|nah|nope)$/i;
 
-export async function validateAnswer(
-  question: Question,
-  userAnswer: string,
-  _context: Record<string, string>
-): Promise<AnswerValidation> {
-  // Normalize answer
-  const normalized = userAnswer.trim().toLowerCase();
-
-  // Initialize validation result
-  const validation: AnswerValidation = {
-    questionId: question.id,
-    originalQuestion: question.question,
-    userAnswer,
-    expectedField: question.field,
-    isUsable: false,
-    qualityScore: 0,
-    extractedValue: null,
-    issues: [],
-    normalizedAnswer: userAnswer.trim(),
-  };
-
-  // Check for obvious garbage answers
-  const garbagePatterns = [
-    /^[0-9.,\s]*$/, // Only numbers/punctuation
-    /^[.!?;,\-_]+$/, // Only punctuation
-    /^[a-z]{1,2}$/i, // Single or two letters (unless name question)
-    /^(idk|dunno|na|n\/a|nope|nah|hmm|uh|um)$/i,
-  ];
-
-  const isGarbage = garbagePatterns.some((pattern) => pattern.test(normalized));
-
-  if (isGarbage && question.field !== "name") {
-    validation.issues.push("Answer appears to be incomplete or not meaningful");
-    validation.qualityScore = 0.1;
-    validation.followUpQuestion = generateFollowUp(question, "garbage");
-    return validation;
-  }
-
-  // Field-specific validation
-  switch (question.field) {
-    case "name":
-      return validateName(userAnswer, validation);
-    case "location":
-      return validateLocation(userAnswer, validation);
-    case "hoursPerWeek":
-      return validateHoursPerWeek(userAnswer, validation);
-    case "targetUser":
-      return validateTargetUser(userAnswer, validation);
-    case "rawIdea":
-      return validateRawIdea(userAnswer, validation);
-    case "problem":
-      return validateProblem(userAnswer, validation);
-    case "evidenceLevel":
-      return validateEvidenceLevel(userAnswer, validation);
-    default:
-      return validateGenericText(question, userAnswer, validation);
-  }
-}
-
-function validateName(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim();
-
-  // Check for obvious non-names
-  const badPatterns = [
-    /^[0-9]+$/,
-    /^[.!?;,]+$/,
-    /^(idk|random|aaa+|test|user|noname)$/i,
-    /^(what|why|how|when|where)/i,
-  ];
-
-  if (badPatterns.some((p) => p.test(normalized))) {
-    validation.issues.push("Not a valid name");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = "I didn't catch a usable name. What should I call you during this founder plan?";
-    return validation;
-  }
-
-  if (normalized.length < 2) {
-    validation.issues.push("Name too short");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "Could you give me your actual name or nickname?";
-    return validation;
-  }
-
-  // Accept it
-  validation.isUsable = true;
-  validation.qualityScore = 0.9;
-  validation.extractedValue = normalized;
-  validation.normalizedAnswer = normalized;
-  return validation;
-}
-
-function validateLocation(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim();
-
-  // Check for garbage
-  if (normalized.length < 3) {
-    validation.issues.push("Location too vague");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = "Which country and city are you building from?";
-    return validation;
-  }
-
-  const badPatterns = [/^(earth|world|online|internet|nowhere|idk)$/i];
-
-  if (badPatterns.some((p) => p.test(normalized))) {
-    validation.issues.push("Location not specific enough");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "I need at least a country name. Where are you based?";
-    return validation;
-  }
-
-  // Extract country and city if possible
-  // Simple heuristic: "Mumbai, India" or "India" or "San Francisco, USA"
-  const parts = normalized.split(",").map((p) => p.trim());
-  validation.extractedValue = {
-    country: parts.length > 1 ? parts[parts.length - 1] : parts[0],
-    city: parts.length > 1 ? parts[0] : undefined,
-  };
-
-  validation.isUsable = true;
-  validation.qualityScore = parts.length > 1 ? 0.9 : 0.7;
-  validation.normalizedAnswer = normalized;
-  return validation;
-}
-
-function validateHoursPerWeek(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim().toLowerCase();
-
-  // Try to extract a number
-  const numberMatch = normalized.match(/(\d+)/);
-
-  if (!numberMatch) {
-    // Check for descriptive answers
-    if (/(not sure|unclear|depends|varies)/i.test(normalized)) {
-      validation.qualityScore = 0.5;
-      validation.followUpQuestion =
-        "That's okay. Give me a rough range — less than 3, 3–7, 7–15, or 15+ hours per week?";
-      return validation;
-    }
-
-    if (/(a lot|many|lots|plenty)/i.test(normalized)) {
-      validation.qualityScore = 0.6;
-      validation.followUpQuestion = "Great! Can you put a rough number on it? Like 10, 15, 20 hours per week?";
-      return validation;
-    }
-
-    validation.issues.push("No clear hour estimate");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = "How many hours per week can you realistically spend? Just a rough number.";
-    return validation;
-  }
-
-  const hours = parseInt(numberMatch[1], 10);
-
-  if (hours === 0) {
-    validation.issues.push("Zero hours is not actionable");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "If you have zero hours available, it might not be the right time. Do you mean less than 5 hours?";
-    return validation;
-  }
-
-  if (hours > 80) {
-    validation.qualityScore = 0.6;
-    validation.followUpQuestion = `${hours} hours seems very high. Realistically, how many focused hours per week?`;
-    return validation;
-  }
-
-  validation.isUsable = true;
-  validation.qualityScore = 0.9;
-  validation.extractedValue = hours;
-  validation.normalizedAnswer = `${hours} hours per week`;
-  return validation;
-}
-
-function validateTargetUser(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim().toLowerCase();
-
-  // Check for overly broad answers
-  const tooBroad = [
-    /^(everyone|anybody|anyone|people|users|customers|all)$/i,
-    /^(students|businesses|companies)$/i, // Too generic without qualifier
-  ];
-
-  if (tooBroad.some((p) => p.test(normalized))) {
-    validation.issues.push("Target user too broad");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion =
-      "That's too broad. Which specific type of student/business/user would feel this pain first?";
-    return validation;
-  }
-
-  if (normalized.length < 5) {
-    validation.issues.push("Answer too short");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = "Be more specific. Who exactly is the first user you'd help?";
-    return validation;
-  }
-
-  // Good answers have qualifiers
-  const hasQualifier =
-    /first.year|college|working|professional|freelance|small|startup|tier|local|young|early.stage|beginner/i.test(
-      answer
-    );
-
-  validation.isUsable = true;
-  validation.qualityScore = hasQualifier ? 0.9 : 0.7;
-  validation.extractedValue = answer.trim();
-  validation.normalizedAnswer = answer.trim();
-  return validation;
-}
-
-function validateRawIdea(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim().toLowerCase();
-
-  // Check for "no idea yet" - this is acceptable
-  if (/(no idea|don't know|not sure|still exploring)/i.test(normalized)) {
-    validation.isUsable = true;
-    validation.qualityScore = 0.8;
-    validation.extractedValue = "no idea yet";
-    validation.normalizedAnswer = "no idea yet";
-    return validation;
-  }
-
-  // Check for garbage
-  const garbage = [/^(app|ai|startup|tech|business|product|website)$/i, /^(make money|get rich|be successful)$/i];
-
-  if (garbage.some((p) => p.test(normalized))) {
-    validation.issues.push("Idea description too vague");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = "Give me at least one sentence. Who is it for, and what problem would it solve?";
-    return validation;
-  }
-
-  if (answer.trim().length < 15) {
-    validation.issues.push("Description too short");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "Describe it in at least one full sentence. What does it do, and who needs it?";
-    return validation;
-  }
-
-  // Good enough
-  validation.isUsable = true;
-  validation.qualityScore = answer.trim().length > 50 ? 0.9 : 0.7;
-  validation.extractedValue = answer.trim();
-  validation.normalizedAnswer = answer.trim();
-  return validation;
-}
-
-function validateProblem(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim().toLowerCase();
-
-  if (normalized.length < 10) {
-    validation.issues.push("Problem statement too short");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "What specific frustration or pain does this solve? One clear sentence.";
-    return validation;
-  }
-
-  const tooVague = [/^(bad|not good|annoying|hard|difficult)$/i, /^(nothing|idk|dunno)$/i];
-
-  if (tooVague.some((p) => p.test(normalized))) {
-    validation.issues.push("Problem not specific enough");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion = "What exactly is painful about the current situation?";
-    return validation;
-  }
-
-  validation.isUsable = true;
-  validation.qualityScore = answer.trim().length > 40 ? 0.9 : 0.7;
-  validation.extractedValue = answer.trim();
-  validation.normalizedAnswer = answer.trim();
-  return validation;
-}
-
-function validateEvidenceLevel(answer: string, validation: AnswerValidation): AnswerValidation {
-  const normalized = answer.trim().toLowerCase();
-
-  // All evidence levels are acceptable, even "no proof"
-  const evidenceLevels = [
-    "only my own belief",
-    "personal experience",
-    "friends told me",
-    "online communities",
-    "competitors exist",
-    "surveys",
-    "interviews",
-    "users",
-    "revenue",
-    "research",
-    "data",
-    "no proof",
-    "none",
-  ];
-
-  const hasEvidence = evidenceLevels.some((level) => normalized.includes(level));
-
-  if (normalized.length < 3) {
-    validation.issues.push("Evidence level unclear");
-    validation.qualityScore = 0.3;
-    validation.followUpQuestion =
-      "How do you know this problem is real? Personal experience, user feedback, community posts, data?";
-    return validation;
-  }
-
-  validation.isUsable = true;
-  validation.qualityScore = hasEvidence ? 0.9 : 0.7;
-  validation.extractedValue = answer.trim();
-  validation.normalizedAnswer = answer.trim();
-  return validation;
-}
-
-function validateGenericText(
+function result(
   question: Question,
   answer: string,
-  validation: AnswerValidation
+  score: number,
+  extractedValue: unknown,
+  issues: string[] = [],
+  followUpQuestion?: string,
+  normalizedAnswer = answer.trim(),
 ): AnswerValidation {
-  const normalized = answer.trim();
-
-  if (normalized.length < 3) {
-    validation.issues.push("Answer too short");
-    validation.qualityScore = 0.2;
-    validation.followUpQuestion = `I might be misunderstanding. Could you answer "${question.conversationalVariant}" in one clear sentence?`;
-    return validation;
-  }
-
-  // Accept it
-  validation.isUsable = true;
-  validation.qualityScore = normalized.length > 20 ? 0.8 : 0.6;
-  validation.extractedValue = normalized;
-  validation.normalizedAnswer = normalized;
-  return validation;
+  return {
+    questionId: question.id,
+    originalQuestion: question.question,
+    userAnswer: answer,
+    expectedField: question.field,
+    isUsable: score >= 0.65,
+    qualityScore: score,
+    extractedValue,
+    issues,
+    followUpQuestion,
+    normalizedAnswer,
+    provider: "deterministic-fallback",
+  };
 }
 
-function generateFollowUp(question: Question, reason: "garbage" | "unclear" | "tooBroad"): string {
-  if (reason === "garbage") {
-    return `I didn't catch a clear answer. ${question.conversationalVariant}`;
+export function validateAnswerFallback(question: Question, userAnswer: string): AnswerValidation {
+  const answer = userAnswer.trim();
+  const lower = answer.toLowerCase();
+  if (!answer || lowEffort.test(answer)) {
+    return result(question, answer, 0.15, null, ["Answer is empty, accidental, or too low-effort"], `I might have missed that. ${question.conversationalVariant}`);
   }
-  if (reason === "tooBroad") {
-    return `That's a bit too broad. ${question.conversationalVariant}`;
+
+  switch (question.field) {
+    case "name": {
+      const name = answer.replace(/^(?:i am|i'm|my name is|call me)\s+/i, "").split(/\s+from\s+/i)[0].trim();
+      if (name.length < 2 || /\d/.test(name) || /^(?:what|why|how)\b/i.test(name)) {
+        return result(question, answer, 0.2, null, ["No usable name found"], "I didn't catch a usable name. What should I call you during this founder plan?");
+      }
+      return result(question, answer, 0.92, name, [], undefined, name);
+    }
+    case "location": {
+      if (/^(?:earth|world|online|somewhere|nowhere)$/i.test(answer) || answer.length < 3) {
+        return result(question, answer, 0.25, null, ["Country is missing"], "Which country are you based in? You can add your city too.");
+      }
+      const parts = answer.replace(/^i(?:'m| am)?\s+(?:from|in|based in)\s+/i, "").split(",").map((part) => part.trim());
+      return result(question, answer, parts.length > 1 ? 0.9 : 0.72, { country: parts.at(-1), city: parts.length > 1 ? parts[0] : undefined }, [], undefined, parts.join(", "));
+    }
+    case "hoursPerWeek": {
+      const number = answer.match(/\d+/)?.[0];
+      if (!number) {
+        return result(question, answer, /not sure/i.test(answer) ? 0.5 : 0.25, null, ["No realistic hour estimate"], "That's okay. Choose a rough range: less than 3, 3-7, 7-15, or 15+ hours per week.");
+      }
+      const hours = Number(number);
+      if (hours === 0 || hours > 100) return result(question, answer, 0.45, hours, ["Estimate needs confirmation"], "Give me the realistic focused time you can protect each week.");
+      return result(question, answer, 0.9, hours, [], undefined, `${hours} hours per week`);
+    }
+    case "rawIdea": {
+      if (/no idea|still exploring|do not have an idea|don't have an idea/i.test(lower)) return result(question, answer, 0.9, "no idea yet", [], undefined, "no idea yet");
+      if (/^(?:app|ai|startup|website|make money|something with students)$/i.test(answer) || answer.length < 18) {
+        return result(question, answer, 0.2, null, ["Idea is too vague"], "Give me one clear sentence: who is it for, and what problem would it solve?");
+      }
+      return result(question, answer, answer.length > 45 ? 0.9 : 0.7, answer);
+    }
+    case "targetUser": {
+      if (/no idea|not defined/i.test(lower)) return result(question, answer, 0.82, "no idea yet", [], undefined, "no idea yet");
+      if (/^(?:everyone|anyone|people|users|students|businesses|companies)$/i.test(answer)) {
+        return result(question, answer, 0.25, null, ["Target user is too broad"], "That's too broad. Which specific type of user would feel this pain first?");
+      }
+      return result(question, answer, answer.length > 15 ? 0.86 : 0.68, answer);
+    }
+    case "problem": {
+      if (/no idea|not defined/i.test(lower)) return result(question, answer, 0.82, "no idea yet", [], undefined, "no idea yet");
+      if (answer.length < 14 || /^(?:hard|bad|annoying|nothing)$/i.test(answer)) {
+        return result(question, answer, 0.28, null, ["Problem is not specific enough"], "What specific frustration, cost, delay, or risk does this remove?");
+      }
+      return result(question, answer, answer.length > 35 ? 0.9 : 0.7, answer);
+    }
+    case "evidenceLevel": {
+      if (/no proof|none|only my own|belief/i.test(lower)) return result(question, answer, 0.88, "low evidence", [], undefined, "No proof yet");
+      return result(question, answer, answer.length > 5 ? 0.86 : 0.5, answer, answer.length > 5 ? [] : ["Evidence is unclear"], "Choose the closest evidence level, including 'no proof yet'.");
+    }
+    case "openToModification": {
+      if (/^(?:yes|yep|yeah|absolutely|open|sure)/i.test(lower)) return result(question, answer, 0.95, true, [], undefined, "yes");
+      if (/^(?:no|not open|keep)/i.test(lower)) return result(question, answer, 0.9, false, [], undefined, "no");
+      return result(question, answer, 0.35, null, ["Could not determine yes or no"], "Please choose clearly: yes, I am open, or no, keep the current idea.");
+    }
+    case "stage": {
+      const stages = ["no idea yet", "rough idea", "started building", "mvp exists", "users exist", "revenue exists"];
+      const stage = stages.find((item) => lower.includes(item.replace(" exists", "")));
+      return stage ? result(question, answer, 0.9, stage, [], undefined, stage === "mvp exists" ? "MVP exists" : stage) : result(question, answer, 0.35, null, ["Stage is unclear"], "Choose the closest stage from the options.");
+    }
+    case "budget":
+      if (/not sure/i.test(lower)) return result(question, answer, 0.75, "Not sure", [], undefined, "Not sure");
+      return answer.length > 2 ? result(question, answer, 0.82, answer) : result(question, answer, 0.3, null, ["Budget is unclear"], "Choose the closest budget range.");
+    case "thirtyDayGoal":
+      if (!/\d/.test(answer)) return result(question, answer, 0.5, answer, ["Goal is not measurable"], "Add one number: how many interviews, signups, testers, or sales would count as progress?");
+      return result(question, answer, 0.85, answer);
+    default:
+      if (answer.length < 3) return result(question, answer, 0.25, null, ["Answer is too short"], `Could you answer that in one clear sentence? ${question.conversationalVariant}`);
+      return result(question, answer, answer.length > 12 ? 0.82 : 0.68, answer);
   }
-  return question.conversationalVariant;
 }
 
-/**
- * Check if we should continue to the next question or ask a follow-up
- */
-export function shouldContinueToNext(validation: AnswerValidation, retryCount: number): {
-  continue: boolean;
-  action: "accept" | "followup" | "retry" | "skip";
-  message?: string;
-} {
-  // Max 2 retries per question
-  if (retryCount >= 2) {
-    if (validation.qualityScore < 0.4) {
-      return {
-        continue: true,
-        action: "skip",
-        message: "Let's move on for now. We can revisit this later.",
-      };
+export async function validateAnswer(question: Question, userAnswer: string, context: Record<string, unknown>) {
+  if (typeof window !== "undefined") {
+    try {
+      const response = await fetch("/api/intake/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, userAnswer, context }),
+      });
+      if (response.ok) return (await response.json()) as AnswerValidation;
+    } catch {
+      // Network failure falls through to the deterministic validator.
     }
   }
+  return validateAnswerFallback(question, userAnswer);
+}
 
-  if (validation.qualityScore >= 0.65) {
-    return {
-      continue: true,
-      action: "accept",
-    };
-  }
-
-  if (validation.qualityScore >= 0.4) {
-    return {
-      continue: false,
-      action: "followup",
-      message: validation.followUpQuestion,
-    };
-  }
-
-  return {
-    continue: false,
-    action: "retry",
-    message: validation.followUpQuestion,
-  };
+export function shouldContinueToNext(validation: AnswerValidation, retryCount: number, critical = false) {
+  if (validation.qualityScore >= 0.65) return { continue: true, action: "accept" as const };
+  if (retryCount >= 2 && !critical) return { continue: true, action: "skip" as const, message: "I will mark that as unclear for now and keep moving." };
+  if (validation.qualityScore >= 0.4) return { continue: false, action: "followup" as const, message: validation.followUpQuestion };
+  return { continue: false, action: "retry" as const, message: validation.followUpQuestion };
 }

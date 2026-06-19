@@ -1,23 +1,13 @@
 # Voice Architecture
 
-LaunchPilot is designed for a premium voice-first interview, but it must always work without voice.
+Provider order:
 
-## Provider Order
+1. Gemini Live with a secure ephemeral browser token
+2. Browser Web Speech
+3. Text input
 
-1. Gemini Live API when `GEMINI_API_KEY` or `GEMINI_API_KEYS` is configured.
-2. Browser Web Speech API when available.
-3. Text chat mode always.
+When `GEMINI_API_KEY` or `GEMINI_API_KEYS` is configured, authenticated `/api/voice` creates a one-use, short-lived token constrained to `GEMINI_LIVE_MODEL` (default `gemini-3.1-flash-live-preview`). The browser connects with `@google/genai` using API version `v1alpha`; the long-lived key never enters client configuration.
 
-## Privacy
+The live client captures microphone samples, resamples them to 16 kHz PCM, and streams them without writing audio to storage. If token creation, quota, connection, microphone, or transcription fails, the UI moves to browser speech and then text.
 
-Raw audio is not stored by default. Voice input is used to produce interview transcript text, and that transcript goes through the same guardrails as typed answers.
-
-## Guardrails
-
-Irrelevant voice input is redirected with the same message used in text mode:
-
-`Let's stay focused on your founder plan for now. I can help with your idea, skills, market, risks, roadmap, opportunities, or next step.`
-
-## Current MVP Status
-
-The app exposes voice readiness and fallback status through `/api/voice`. Full Gemini Live websocket streaming is a future production upgrade; the hackathon demo remains fully usable through chat and deterministic brief generation.
+Voice and chat share one interview state machine, answer validator, field extractor, and research gate. Only transcripts and structured answers are persisted. Raw audio is never written to browser storage, SQLite, or disk.

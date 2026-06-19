@@ -1,33 +1,49 @@
 "use client";
 
 import { Nav } from "@/components/Nav";
-import { Shield, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Download, LogOut, Shield, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export default function SettingsPage() {
-  const [cleared, setCleared] = useState(false);
-  function clearContext() {
-    ["launchpilot-user", "launchpilot-profile", "launchpilot-brief", "launchpilot-interview"].forEach((key) => localStorage.removeItem(key));
-    setCleared(true);
+  const router = useRouter();
+  const [status, setStatus] = useState("");
+  const [api, setApi] = useState<{ liveVoice?: { available: boolean; mode: string } } | null>(null);
+  useEffect(() => { fetch("/api/voice").then((response) => response.json()).then(setApi).catch(() => null); }, []);
+
+  async function clearContext() {
+    const response = await fetch("/api/account/data", { method: "DELETE" });
+    if (response.ok) {
+      Object.keys(localStorage).filter((key) => key.startsWith("launchpilot-")).forEach((key) => localStorage.removeItem(key));
+      setStatus("Saved founder context and workspace cleared.");
+    }
+  }
+  async function exportData() {
+    const response = await fetch("/api/account/data");
+    const data = await response.json();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "launchpilot-data.json"; anchor.click(); URL.revokeObjectURL(url);
+  }
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/login"); router.refresh();
   }
   return (
     <main className="shell-bg min-h-screen">
       <Nav />
-      <section className="mx-auto flex min-h-[calc(100vh-88px)] max-w-2xl items-center px-5 pb-10">
-        <div className="glass w-full rounded-[32px] p-6">
-          <div className="flex items-center gap-3">
-            <Shield className="h-5 w-5 text-blue-600" />
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Privacy and saved context</h1>
+      <section className="mx-auto max-w-3xl px-5 pb-12">
+        <div className="glass rounded-[32px] p-7">
+          <div className="flex items-center gap-3"><Shield className="h-5 w-5 text-emerald-600" /><h1 className="text-3xl font-semibold text-stone-950">Settings and saved context</h1></div>
+          <div className="mt-7 divide-y divide-stone-200 text-sm">
+            <div className="flex items-start justify-between gap-4 py-5"><div><h2 className="font-semibold text-stone-950">Storage</h2><p className="mt-1 leading-6 text-stone-600">Founder intake, validations, approved direction, sources, agent reports, workspace, and Copilot history are stored in local SQLite under your account.</p></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-800">User-scoped</span></div>
+            <div className="flex items-start justify-between gap-4 py-5"><div><h2 className="font-semibold text-stone-950">Live voice</h2><p className="mt-1 leading-6 text-stone-600">{api?.liveVoice?.available ? "Secure live voice is available." : "Browser speech and text are available."} Raw audio is never persisted.</p></div><span className="rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-600">{api?.liveVoice?.available ? "Ready" : "Fallback ready"}</span></div>
           </div>
-          <div className="mt-6 space-y-4 text-sm leading-6 text-slate-600">
-            <p>LaunchPilot saves demo profile data, structured interview answers, workspace cards, sources, agent outputs, roadmap, and chatbot context in browser local storage.</p>
-            <p>Raw audio is not stored by default. Gemini Live is optional; Web Speech and text mode fallbacks remain available.</p>
-            <p>API keys are read from environment variables only. The UI never stores plaintext keys.</p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button onClick={() => void exportData()} className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-5 py-3 text-sm font-semibold"><Download className="h-4 w-4" /> Export data</button>
+            <button onClick={() => void clearContext()} className="inline-flex items-center gap-2 rounded-full bg-stone-950 px-5 py-3 text-sm font-semibold text-white"><Trash2 className="h-4 w-4" /> Clear context and workspace</button>
+            <button onClick={() => void logout()} className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-5 py-3 text-sm font-semibold"><LogOut className="h-4 w-4" /> Log out</button>
           </div>
-          <button className="mt-6 inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white" onClick={clearContext}>
-            <Trash2 className="h-4 w-4" /> Clear workspace
-          </button>
-          {cleared && <p className="mt-4 text-sm text-emerald-700">Saved context cleared from this browser.</p>}
+          {status && <p className="mt-4 text-sm text-emerald-700">{status}</p>}
         </div>
       </section>
     </main>

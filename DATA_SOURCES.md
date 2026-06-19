@@ -1,27 +1,24 @@
 # Data Sources
 
-LaunchPilot uses a source registry plus deterministic fallback data so the product works without API keys.
+LaunchPilot creates 9–11 idea-specific queries covering problem language, demand, community signals, direct products, current alternatives, reviews, pricing, feasibility, location constraints, and relevant official programs.
 
-## ESCO
+Provider order:
 
-ESCO is used as the official-source reference for skill mapping. In the MVP, skill gaps are deterministic and tied to the founder's current bottleneck.
+1. Gemini Search Grounding using the configured Gemini key
+2. Tavily
+3. Exa
+4. SerpAPI
+5. Google Custom Search when both a key and search-engine ID exist
+6. Limited offline analysis
 
-## Global Entrepreneurship Monitor
+Each query falls through this order until a provider returns usable results. Provider failures never create synthetic URLs.
 
-GEM is referenced for entrepreneurship climate context. The MVP labels this as verified research context rather than exact market proof.
+Results are canonicalized, deduplicated, opened when possible, and evaluated for relevance, source quality, verification, corroboration, and source-type diversity. GitHub, GitLab, package registries, and source-code project pages are excluded from market competitors. Login walls and verification walls are not treated as opened evidence. Article and guide pages remain contextual sources rather than direct competitors.
 
-## World Bank
+Source labels include `official`, `competitor`, `community_signal`, `review`, `market_report`, `blog`, `dataset`, and `fallback`.
 
-World Bank business-formation data is referenced as approximate macro context. LaunchPilot does not invent market size from it.
+No source, competitor, traction, revenue, or market size is fabricated. Every evidence claim stores source IDs, support status, confidence, relevance, quality, and limitations. Community discussion remains directional rather than proof of willingness to pay.
 
-## Startup India / DPIIT / MAARG
+When live retrieval is unavailable, the product states:
 
-For India-based founders, LaunchPilot suggests Startup India, DPIIT recognition, and MAARG as support paths. It tells users to verify current eligibility on official pages and does not claim eligibility automatically.
-
-## Lean Startup / Business Model Canvas
-
-These frameworks shape assumption mapping, MVP scoping, and validation experiments.
-
-## Fallback Seed Data
-
-When live research is unavailable, LaunchPilot labels outputs as `Fallback analysis`, `Approximate`, `Inferred`, or `Needs validation`.
+> Live research is unavailable right now, so LaunchPilot used a limited offline analysis. Validate these findings before making decisions.
