@@ -2,34 +2,6 @@ type BlueprintStepperProps = {
   blueprint: string[];
 };
 
-function parseStep(step: string) {
-  const colonIndex = step.indexOf(":");
-  if (colonIndex === -1) {
-    return { horizon: null as string | null, title: step };
-  }
-
-  const horizon = step.slice(0, colonIndex).trim();
-  const title = step.slice(colonIndex + 1).trim();
-  return { horizon: horizon || null, title: title || step };
-}
-
-function Connector({ fromLeft }: { fromLeft: boolean }) {
-  const path = fromLeft
-    ? "M 22 0 L 22 22 L 78 22 L 78 44"
-    : "M 78 0 L 78 22 L 22 22 L 22 44";
-
-  return (
-    <svg
-      className="blueprint-connector"
-      viewBox="0 0 100 44"
-      preserveAspectRatio="none"
-      aria-hidden
-    >
-      <path d={path} fill="none" stroke="rgba(255, 255, 255, 0.22)" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 export function BlueprintStepper({ blueprint }: BlueprintStepperProps) {
   if (blueprint.length === 0) {
     return (
@@ -42,37 +14,29 @@ export function BlueprintStepper({ blueprint }: BlueprintStepperProps) {
   }
 
   return (
-    <div className="blueprint-flow">
-      <div className="blueprint-glow" aria-hidden />
+    <ol className="space-y-4">
+      {blueprint.map((step, index) => {
+        const [horizon, ...rest] = step.split(":");
+        const title = rest.join(":").trim() || step;
 
-      <ol className="blueprint-steps">
-        {blueprint.map((step, index) => {
-          const { horizon, title } = parseStep(step);
-          const alignLeft = index % 2 === 0;
-
-          return (
-            <li key={`${index}-${step.slice(0, 24)}`} className="blueprint-step">
-              <article
-                className={`blueprint-step-card ${alignLeft ? "blueprint-step-card--left" : "blueprint-step-card--right"}`}
-              >
-                <div className="blueprint-step-index">{index + 1}</div>
-                <div className="blueprint-step-body">
-                  {horizon ? (
-                    <>
-                      <p className="mono-label">{horizon}</p>
-                      <p className="mt-1 text-sm leading-6 text-lp-muted">{title}</p>
-                    </>
-                  ) : (
-                    <p className="text-sm leading-6 text-lp-muted">{title}</p>
-                  )}
-                </div>
-              </article>
-
-              {index < blueprint.length - 1 && <Connector fromLeft={alignLeft} />}
-            </li>
-          );
-        })}
-      </ol>
-    </div>
+        return (
+          <li key={`${index}-${step.slice(0, 24)}`} className="flex gap-4 border border-white/10 p-4">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-white/20 font-mono text-xs text-white">
+              {index + 1}
+            </div>
+            <div>
+              {rest.length > 0 ? (
+                <>
+                  <p className="mono-label">{horizon.trim()}</p>
+                  <p className="mt-1 text-sm leading-6 text-lp-muted">{title}</p>
+                </>
+              ) : (
+                <p className="text-sm leading-6 text-lp-muted">{step}</p>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
