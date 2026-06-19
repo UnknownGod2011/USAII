@@ -1,27 +1,44 @@
 # Data Sources
 
-LaunchPilot uses a source registry plus deterministic fallback data so the product works without API keys.
+## Provider chain
 
-## ESCO
+LaunchPilot searches in this order:
 
-ESCO is used as the official-source reference for skill mapping. In the MVP, skill gaps are deterministic and tied to the founder's current bottleneck.
+1. Gemini Search grounding
+2. Tavily
+3. Exa
+4. SerpAPI
+5. Google Custom Search when both a key and engine ID exist
+6. Limited offline analysis
 
-## Global Entrepreneurship Monitor
+One configured key works. Comma-separated plural variables enable round-robin pools, cooldowns, safe retries, and fallback to the next provider.
 
-GEM is referenced for entrepreneurship climate context. The MVP labels this as verified research context rather than exact market proof.
+## Stored source fields
 
-## World Bank
+Each retained source includes:
 
-World Bank business-formation data is referenced as approximate macro context. LaunchPilot does not invent market size from it.
+- title and URL
+- query and snippet
+- source classification
+- what it supports
+- limitation
+- confidence
+- verification state
+- relevance and quality scores
 
-## Startup India / DPIIT / MAARG
+Classifications include competitor, alternative, official, community signal, review, market report, blog article, dataset, and fallback offline analysis.
 
-For India-based founders, LaunchPilot suggests Startup India, DPIIT recognition, and MAARG as support paths. It tells users to verify current eligibility on official pages and does not claim eligibility automatically.
+## Evidence rules
 
-## Lean Startup / Business Model Canvas
+- A source page or GitHub repository is not automatically a competitor.
+- Direct competitors require product and user-overlap evidence.
+- Adjacent tools, services, and manual workarounds stay labeled as alternatives.
+- Blogs can support workflow context but do not prove market demand by themselves.
+- Market size, traction, revenue, funding, testimonials, and eligibility are never invented.
+- The Evidence Score is capped when direct user, pilot, usage, or payment evidence is missing.
 
-These frameworks shape assumption mapping, MVP scoping, and validation experiments.
+If all live providers fail, the product states:
 
-## Fallback Seed Data
+> Live research is unavailable right now, so LaunchPilot used a limited offline analysis. Validate these findings before making decisions.
 
-When live research is unavailable, LaunchPilot labels outputs as `Fallback analysis`, `Approximate`, `Inferred`, or `Needs validation`.
+Provider names remain in developer documentation and diagnostics, not normal product UI.

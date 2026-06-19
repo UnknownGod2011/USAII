@@ -40,6 +40,7 @@ export function EditProfileModal({
   useEffect(() => {
     if (!open) return;
     const user = getStoredUser();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayName(initialDisplayName?.trim() || (user ? getUserLabel(user) : "Founder"));
     setAvatarUrl(initialAvatarUrl ?? null);
     setError(null);

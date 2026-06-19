@@ -22,7 +22,7 @@ export function LandingSafety() {
           in the loop from interview through build.
         </p>
         <p>
-          Your founder profile and project data are stored in your account on Firestore. Interview transcripts
+          Your founder profile, research evidence, and project workspace are stored in user-scoped records. Interview transcripts
           and project details stay private to you — we do not sell founder context or use it for unrelated
           training.
         </p>

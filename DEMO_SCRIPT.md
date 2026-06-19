@@ -1,34 +1,54 @@
-# Judge Demo Script
+# LaunchPilot Judge Demo
 
-1. Start at `/`.
-   - Explain: LaunchPilot turns vague student founder ideas into a validated first-step plan.
+Target length: 3–5 minutes.
 
-2. Click `Start Founder Interview`.
-   - Continue as Demo Founder.
-   - On `/start`, show the voice bubble and the obvious `I prefer to chat` fallback.
+## Test idea
 
-3. Open `/interview?mode=chat`.
-   - Answer one or two questions.
-   - Try `What is an amethyst?` and show the focused redirect.
-   - Click `Use strong demo profile`.
+> AI T-shirt design web app where users prompt designs, preview on shirts, customize material or color, and modify parts of the design.
 
-4. Dashboard.
-   - Show the Current Bottleneck: unvalidated demand.
-   - Show the Founder Reality Check: not funding-ready, validation first.
-   - Show meaningful agent cards and evidence labels.
-   - Show the Launch Brief Workspace cards.
+Suggested founder context:
 
-5. Context Copilot.
-   - Ask: `Should I drop out?`
-   - Expected: cautious response, no final decision, validate first.
-   - Ask: `Should I apply to Startup India?`
-   - Expected: suggests checking official eligibility, treats it as support not proof.
+- India-based student founder
+- 12 hours per week
+- under INR 5,000 for the first pilot
+- React, product design, prompting, basic AI integration
+- solo, with friends available for testing
+- rough idea, no proof yet
+- open to modification
 
-6. Export.
-   - Copy or download the Launch Brief Markdown/JSON.
+## Demo flow
 
-7. Privacy.
-   - Open `/settings`.
-   - Show what is saved and clear workspace.
+1. Sign in and open `/start`.
+2. Show chat and voice options. Mention that raw audio is not stored.
+3. In chat, show that `app`, `everyone`, and `0` are rejected while `No proof yet` and `I'm not sure` are accepted honestly.
+4. Complete the intake and show the automatic validation transition.
+5. On validation, explain the source-backed score, strongest signal, weakest signal, and refinement.
+6. Approve the refined direction and click `Run In-Depth Market Research`.
+7. On the dashboard, pause while six agents visibly move from queued to working to complete.
+8. Show:
+   - clean title and positioning
+   - current bottleneck and next action
+   - no falsely claimed direct competitor
+   - competitor/alternative matrix
+   - risk experiments and stop/pivot triggers
+   - manual pilot and do-not-build list
+   - roadmap, opportunities, pitch assets, and source ledger
+9. Ask Copilot:
+   - `What should I do today?`
+   - `What competitors did you find?`
+   - `Should I find investors?`
+   - `Should I drop out?`
+   - `What is an amethyst?`
+10. Open Profile to show persisted intake, finalized idea, score, verdict, and bottleneck.
+11. Download Markdown and JSON, then refresh and sign out/sign in to show persistence.
 
-Core message for judges: LaunchPilot is not a generic chatbot. It is a persistent, evidence-labeled founder workspace that helps a student know the next real step.
+## Expected headline output
+
+- Title: `AI T-Shirt Design Workspace`
+- Positioning: `Not another generic design tool. A faster revision workflow for print-ready apparel mockups.`
+- Next action: interview five small apparel sellers or campus merch creators about their most recent order, revision time, tools, print handoff, and delays—without pitching.
+- MVP: prompt → three concepts → edit one region/color/material → mockup and export-ready preview.
+
+## Judge message
+
+LaunchPilot is not a chatbot wrapper. It is a research, evidence-scoring, normalization, agent synthesis, persistent workspace, and execution system that keeps uncertainty visible and turns it into the next real founder action.

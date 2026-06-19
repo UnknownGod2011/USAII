@@ -11,6 +11,7 @@ export async function validateAnswer(
   userAnswer: string,
   _context: Record<string, string>
 ): Promise<AnswerValidation> {
+  void _context;
   // Normalize answer
   const normalized = userAnswer.trim().toLowerCase();
 
@@ -25,6 +26,7 @@ export async function validateAnswer(
     extractedValue: null,
     issues: [],
     normalizedAnswer: userAnswer.trim(),
+    provider: "deterministic-fallback",
   };
 
   // Check for obvious garbage answers
@@ -222,7 +224,7 @@ function validateRawIdea(answer: string, validation: AnswerValidation): AnswerVa
   const normalized = answer.trim().toLowerCase();
 
   // Check for "no idea yet" - this is acceptable
-  if (/(no idea|don't know|not sure|still exploring)/i.test(normalized)) {
+  if (/(no idea|do not have an idea|don't have an idea|don't know|not sure|still exploring)/i.test(normalized)) {
     validation.isUsable = true;
     validation.qualityScore = 0.8;
     validation.extractedValue = "no idea yet";

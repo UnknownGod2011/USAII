@@ -9,10 +9,30 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function continueDemo() {
-    const user = { email: email || "founder@demo.local", mode: "demo" };
-    localStorage.setItem("launchpilot-user", JSON.stringify(user));
+  async function continueToWorkspace() {
+    setError("");
+    setLoading(true);
+    const safeEmail = email.trim();
+    if (!safeEmail) {
+      setError("Enter your email address.");
+      setLoading(false);
+      return;
+    }
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: safeEmail, name: safeEmail.split("@")[0] }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setError(data.error || "Could not start your session.");
+      setLoading(false);
+      return;
+    }
+    localStorage.setItem("launchpilot-user", JSON.stringify(data.user));
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/start");
   }
@@ -60,12 +80,13 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <button className="btn-primary mt-8 w-full" onClick={continueDemo}>
-            Continue
+          {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+          <button className="btn-primary mt-8 w-full" onClick={continueToWorkspace} disabled={loading}>
+            {loading ? "Starting secure session…" : "Continue"}
           </button>
 
           <p className="mt-6 text-center font-mono text-xs text-lp-subtle">
-            Demo mode — no production auth required
+            Your founder context is stored in your signed local workspace.
           </p>
         </div>
       </div>

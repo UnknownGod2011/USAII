@@ -13,6 +13,7 @@ export function ProjectNameEditor({ name, onSave }: ProjectNameEditorProps) {
   const [draft, setDraft] = useState(name);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!editing) setDraft(name);
   }, [name, editing]);
 

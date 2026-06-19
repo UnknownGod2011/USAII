@@ -1,23 +1,32 @@
 # Voice Architecture
 
-LaunchPilot is designed for a premium voice-first interview, but it must always work without voice.
+Voice and chat feed the same validated founder-intake pipeline.
 
-## Provider Order
+## Runtime order
 
-1. Gemini Live API when `GEMINI_API_KEY` or `GEMINI_API_KEYS` is configured.
-2. Browser Web Speech API when available.
-3. Text chat mode always.
+1. English browser speech recognition and speech synthesis for stable app-controlled turns.
+2. Short-lived Gemini Live session when browser recognition is unavailable and a server-side key exists.
+3. Typed answer input.
+4. Chat interview remains available at all times.
 
-## Privacy
+## Turn control
 
-Raw audio is not stored by default. Voice input is used to produce interview transcript text, and that transcript goes through the same guardrails as typed answers.
+- The microphone is paused while LaunchPilot speaks.
+- Browser speech uses silence detection before committing an answer.
+- Gemini Live only plays audio for an explicitly supplied interview question.
+- PCM response chunks are queued sequentially rather than started simultaneously.
+- Unsolicited model audio is suppressed.
+- Input is fixed to English (`en-IN`) for the target demo audience.
+- Transcripts dominated by an unexpected CJK script are rejected and the user is asked to repeat.
 
-## Guardrails
+## Security and privacy
 
-Irrelevant voice input is redirected with the same message used in text mode:
+- The Gemini API key never reaches the browser.
+- `/api/voice` issues a one-use, short-lived token.
+- Raw audio is not written to the database or filesystem.
+- Only transcript text and validated founder answers are persisted.
+- Ending a conversation stops microphone tracks, playback, recognition, and the live session.
 
-`Let's stay focused on your founder plan for now. I can help with your idea, skills, market, risks, roadmap, opportunities, or next step.`
+## Fallback behavior
 
-## Current MVP Status
-
-The app exposes voice readiness and fallback status through `/api/voice`. Full Gemini Live websocket streaming is a future production upgrade; the hackathon demo remains fully usable through chat and deterministic brief generation.
+Microphone denial, provider errors, or unsupported browser APIs do not crash the interview. The screen exposes typed input or links to chat mode with the same answer validation and persistence behavior.

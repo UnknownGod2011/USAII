@@ -1,95 +1,77 @@
 "use client";
 
-import { Nav } from "@/components/Nav";
 import SideRays from "@/components/animations/SideRays";
-import { ProjectCard } from "@/components/projects/ProjectCard";
-import { listProjects } from "@/lib/projects/firestore";
-import { getCurrentUserId } from "@/lib/auth-session";
+import { LaunchBriefView } from "@/components/LaunchBriefView";
+import { Nav } from "@/components/Nav";
+import type { LaunchBrief } from "@/lib/types";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { ProjectListItem } from "@/lib/projects/types";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
-export default function DashboardPage() {
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+function DashboardContent() {
+  const projectId = useSearchParams().get("projectId");
+  const [brief, setBrief] = useState<LaunchBrief | null>(null);
+  const [error, setError] = useState("");
+  const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [building, setBuilding] = useState(false);
   useEffect(() => {
-    async function load() {
+    let cancelled = false;
+    const url = projectId ? `/api/workspace?projectId=${encodeURIComponent(projectId)}` : "/api/workspace";
+    async function loadAndBuild() {
       try {
-        setProjects(await listProjects(getCurrentUserId()));
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load projects");
+        const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load your workspace.");
+        if (cancelled) return;
+        setBrief(data.brief);
+        const needsBuild = data.idea?.status === "approved_building" || data.brief?.agents?.some((agent: { status?: string }) => agent.status?.toLowerCase() !== "complete");
+        if (!needsBuild) return;
+        setBuilding(true);
+        let currentBrief = data.brief as LaunchBrief;
+        for (let index = 0; index < 8; index += 1) {
+          if (cancelled) return;
+          const nextAgent = currentBrief.agents.find((agent) => agent.status?.toLowerCase() !== "complete");
+          setActiveAgent(nextAgent?.name || null);
+          const buildResponse = await fetch("/api/workspace/build", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId }),
+          });
+          const buildData = await buildResponse.json();
+          if (!buildResponse.ok) throw new Error(buildData.error || "Could not build agent output.");
+          currentBrief = buildData.brief;
+          if (cancelled) return;
+          setBrief(currentBrief);
+          if (buildData.complete) break;
+          await wait(1000);
+        }
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load your workspace.");
       } finally {
-        setReady(true);
+        if (!cancelled) {
+          setActiveAgent(null);
+          setBuilding(false);
+        }
       }
     }
-
-    void load();
-  }, []);
-
+    void loadAndBuild();
+    return () => { cancelled = true; };
+  }, [projectId]);
   return (
-    <main className="shell-bg relative min-h-screen">
-      <div style={{ position: "absolute", inset: 0, zIndex: -1 }}>
-        <SideRays
-          rayColor1="#444441"
-          rayColor2="#888780"
-          origin="top-right"
-          intensity={1.5}
-          spread={2}
-          opacity={0.5}
-        />
-      </div>
-
-      <div className="relative z-[1]">
-        <Nav />
-
-        <section className="mx-auto max-w-7xl px-5 pb-10 pt-6">
-        <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="mono-label">Workspace</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Your projects</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-lp-muted">
-              One card per published interview. Open a project to see its blueprint, stats, and agent breakdown.
-            </p>
-          </div>
-          <Link href="/start" className="btn-secondary">
-            Start new interview
-          </Link>
-        </div>
-
-        {!ready ? (
-          <div className="terminal-card p-6">
-            <p className="font-mono text-sm text-lp-muted">Loading projects…</p>
-          </div>
-        ) : error ? (
-          <div className="terminal-card p-6">
-            <p className="font-mono text-sm text-red-400">{error}</p>
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="terminal-card p-8 text-center">
-            <p className="mono-label">No projects yet</p>
-            <h2 className="mt-3 text-xl font-semibold text-white">Publish your first interview</h2>
-            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-lp-muted">
-              Complete a voice or chat intake, then click Publish to save a project to Firestore and see it here.
-            </p>
-            <Link href="/start" className="btn-primary mt-6 inline-flex">
-              Start interview
-            </Link>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {projects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                onDeleted={(id) => setProjects((current) => current.filter((entry) => entry.id !== id))}
-              />
-            ))}
-          </div>
-        )}
+    <main className="shell-bg relative min-h-screen text-white">
+      <div className="absolute inset-0 -z-10"><SideRays rayColor1="#444441" rayColor2="#888780" origin="top-right" intensity={1.5} spread={2} opacity={0.5} /></div>
+      <div className="relative z-[1]"><Nav />
+        <section className="mx-auto max-w-[1500px] px-5 pb-16 pt-6">
+          {!brief && !error && <div className="terminal-card mx-auto max-w-2xl p-8"><p className="mono-label">Preparing your Launch Brief</p><h1 className="mt-3 text-3xl font-semibold">Agents are assembling the evidence-backed workspace.</h1><div className="mt-6 space-y-3 font-mono text-xs text-lp-muted">{["Reading finalized founder context", "Loading completed research", "Mapping competitors and risks", "Building roadmap and pitch assets"].map((line) => <p key={line}>› {line}</p>)}</div></div>}
+          {error && <div className="terminal-card mx-auto max-w-xl p-8 text-center"><h1 className="text-2xl font-semibold">Workspace unavailable</h1><p className="mt-3 text-sm text-lp-muted">{error}</p><Link href="/start" className="btn-primary mt-6 inline-flex">Start an interview</Link></div>}
+          {brief && <LaunchBriefView brief={brief} startupIdeaId={projectId} activeAgent={activeAgent} building={building} />}
         </section>
       </div>
     </main>
   );
+}
+export default function DashboardPage() {
+  return <Suspense fallback={<main className="min-h-screen bg-black" />}><DashboardContent /></Suspense>;
 }

@@ -10,6 +10,7 @@ type BrowserSpeechRecognition = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  maxAlternatives: number;
   onresult: ((event: { resultIndex: number; results: SpeechRecognitionResultList }) => void) | null;
   onend: (() => void) | null;
   onerror: ((event: { error: string }) => void) | null;
@@ -126,7 +127,8 @@ export class WebSpeechProvider implements IVoiceProvider {
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = true;
     this.recognition.interimResults = true;
-    this.recognition.lang = this.config.language || "en-US";
+    this.recognition.maxAlternatives = 1;
+    this.recognition.lang = this.config.language || "en-IN";
 
     this.recognition.onresult = (event) => {
       if (this.micPaused || this.isSpeaking) return;
@@ -180,7 +182,7 @@ export class WebSpeechProvider implements IVoiceProvider {
     this.isSpeaking = true;
     this.eventHandler({ type: "speaking", text });
 
-    await speakNaturally(text, this.config.language || "en-US");
+    await speakNaturally(text, this.config.language || "en-IN");
 
     this.isSpeaking = false;
     this.committedThisTurn = "";

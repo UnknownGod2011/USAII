@@ -142,7 +142,7 @@ export function convertToFounderIntake(state: InterviewState): Partial<FounderIn
     thirtyDayGoal?: string;
     openToModification?: boolean;
     transcript?: string[];
-    answerValidations?: unknown[];
+    answerValidations?: AnswerValidation[];
     skippedOrUnclearFields?: string[];
   } = {
     name: state.answers.name || "",
@@ -153,7 +153,7 @@ export function convertToFounderIntake(state: InterviewState): Partial<FounderIn
     budget: state.answers.budget || "unclear",
     skills: state.answers.skills ? state.answers.skills.split(",").map((s) => s.trim()) : [],
     teamStatus: state.answers.teamStatus || "solo",
-    stage: (state.answers.stage as any) || "rough idea",
+    stage: (state.answers.stage as FounderIntake["stage"]) || "rough idea",
     rawIdea: state.answers.rawIdea || "",
     targetUser: state.answers.targetUser || "",
     problem: state.answers.problem || "",

@@ -28,8 +28,9 @@ export function NavUserMenu() {
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
-  function handleSignOut() {
+  async function handleSignOut() {
     setOpen(false);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     clearStoredUser();
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/login");

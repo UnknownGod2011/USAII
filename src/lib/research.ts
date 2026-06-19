@@ -1,278 +1,170 @@
-import fs from "node:fs";
-import path from "node:path";
 import { generateLaunchBrief } from "./agents";
-import { chatCompletion, getActiveProvider } from "./llm";
-import { sourceRegistry } from "./rag";
-import type { FounderProfile, LaunchBrief, ResearchPack, Source } from "./types";
+import type { EvidenceClaim, ResearchSource } from "./intake/schema";
+import { getProviderPoolStatus, providerErrorFromResponse, runWithProviderKey } from "./providers/keyPool";
+import type { FounderProfile, ResearchPack, Source } from "./types";
 
-const fetchTimeoutMs = 6500;
+type PlanItem = ResearchPack["plan"][number];
+type RawResult = { title: string; url: string; snippet: string; provider: NonNullable<Source["provider"]>; query: string; category: PlanItem["category"] };
+const timeoutMs = 8_000;
 
-function isIndia(profile: FounderProfile) {
-  return /india|bengaluru|delhi|mumbai|pune|hyderabad|chennai/i.test(profile.location);
+const host = (value: string) => { try { return new URL(value).hostname.replace(/^www\./, ""); } catch { return ""; } };
+const words = (value: string) => new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
+const overlap = (a: string, b: string) => {
+  const expected = words(a); const actual = words(b);
+  return expected.size ? Math.min(1, [...expected].filter((word) => actual.has(word)).length / Math.min(8, expected.size)) : 0;
+};
+export const isMarketCompetitorUrl = (url: string) => Boolean(url) && !/(?:github\.com|gitlab\.com|bitbucket\.org|npmjs\.com|pypi\.org|sourceforge\.net)/i.test(url);
+export function isLikelyMarketCompetitor(title: string, url: string) {
+  const domain = host(url);
+  if (!isMarketCompetitorUrl(url)) return false;
+  if (/play\.google\.com\/store\/apps|apps\.apple\.com/.test(url)) return true;
+  if (/linkedin\.com|instagram\.com|youtube\.com|reddit\.com|researchgate\.net|medium\.com|substack\.com|quora\.com|indiastudychannel\.com|timesofindia\.indiatimes\.com|wikipedia\.org/.test(domain)) return false;
+  if (/\b(?:why|how|tips?|reasons?|guide|news|posted|failed?|exams?|preparation|toolkit|best|top|alternatives?|comparison|review|study techniques?|overcome|qualify)\b/i.test(title)) return false;
+  if (/\.(?:pdf)(?:$|\?)/i.test(url) || /\/(?:blog|news|article|forum|posts?|reel|watch)\//i.test(url)) return false;
+  return /\b(?:app|software|platform|planner|workspace|product|solution|service|suite)\b/i.test(title);
+}
+export const sourceCanBePresentedAsVerified = (source: ResearchSource) => source.verified && source.relevanceScore >= 0.2 && source.qualityScore >= 0.4 && source.sourceType !== "fallback";
+
+export function createResearchPlan(profile: FounderProfile): PlanItem[] {
+  const { rawIdea: idea, targetUser: user, whyItMatters: problem, location } = profile;
+  return [
+    { id: "problem", query: `"${user}" ${problem} complaints`, category: "problem", purpose: "Find repeated first-hand problem evidence.", preferredSources: ["reviews", "community discussions"] },
+    { id: "demand", query: `${user} ${problem} demand software`, category: "demand", purpose: "Find behavior and demand proxies.", preferredSources: ["datasets", "credible reports", "reviews"] },
+    { id: "community", query: `${user} "${problem}" discussion`, category: "demand", purpose: "Find current language and workarounds.", preferredSources: ["forums", "reviews"] },
+    { id: "competitors", query: `"${user}" ${problem} app software platform`, category: "competitor", purpose: "Find real products serving the same job.", preferredSources: ["company pages", "app stores", "review platforms"] },
+    { id: "reviews", query: `${user} ${problem} app reviews alternatives`, category: "competitor", purpose: "Cross-check product claims.", preferredSources: ["review platforms", "app stores"] },
+    { id: "alternatives", query: `${user} how to solve ${problem}`, category: "competitor", purpose: "Find manual and service alternatives.", preferredSources: ["guides", "service pages"] },
+    { id: "pricing", query: `${idea} pricing alternatives`, category: "pricing", purpose: "Find sourced pricing proxies.", preferredSources: ["official pricing pages"] },
+    { id: "feasibility", query: `${idea} MVP technical constraints`, category: "feasibility", purpose: "Check execution constraints.", preferredSources: ["official documentation", "case studies"] },
+    { id: "location", query: `${idea} regulation adoption ${location}`, category: "feasibility", purpose: "Find location-specific constraints.", preferredSources: ["official sources", "associations"] },
+    { id: "opportunities", query: `${location} startup incubator mentorship program official`, category: "opportunity", purpose: "Find support without assuming eligibility.", preferredSources: ["official program pages"] },
+  ];
 }
 
-async function fetchJson(url: string) {
+async function fetchTimed(url: string, init?: RequestInit) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { "User-Agent": "LaunchPilotAI/1.0 founder-research" },
-      next: { revalidate: 60 * 60 },
-    });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...init, signal: controller.signal, cache: "no-store" }); }
+  finally { clearTimeout(timer); }
 }
+async function json(response: Response) { return response.json().catch(() => ({})) as Promise<Record<string, unknown>>; }
+function results(value: unknown) { return Array.isArray(value) ? value as Array<Record<string, unknown>> : []; }
 
-async function fetchTextSnippet(url: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { "User-Agent": "LaunchPilotAI/1.0 founder-research" },
-      next: { revalidate: 60 * 60 },
+async function gemini(item: PlanItem): Promise<RawResult[]> {
+  return runWithProviderKey("gemini", async (key) => {
+    const model = process.env.GEMINI_SEARCH_MODEL || "gemini-3.5-flash";
+    const response = await fetchTimed(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({ contents: [{ parts: [{ text: `Research using current Google Search results: ${item.query}. Prefer primary and official sources. Do not invent URLs.` }] }], tools: [{ googleSearch: {} }], generationConfig: { temperature: 0.1, maxOutputTokens: 600 } }),
     });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    const text = (await response.text()).replace(/\s+/g, " ");
-    const title = text.match(/<title[^>]*>(.*?)<\/title>/i)?.[1]?.trim();
-    return title || text.slice(0, 180);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function downloadedSeed() {
-  try {
-    const file = path.join(process.cwd(), "data", "live-research-seed.json");
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function researchSummary(profile: FounderProfile, pack: ResearchPack) {
-  const prompt = `Create a concise startup research synthesis for this founder. Return practical, non-hype advice.
-Founder: ${JSON.stringify(profile)}
-Research signals: ${JSON.stringify({
-    competitors: pack.competitors,
-    marketSignals: pack.marketSignals,
-    opportunities: pack.opportunities,
-    skillResources: pack.skillResources,
-    sources: pack.sources.map((source) => ({ title: source.title, url: source.url, label: source.label })),
-  })}`;
-
-  return chatCompletion(
-    [
-      {
-        role: "system",
-        content: "You are a pragmatic startup research analyst. Be concise and evidence-based.",
-      },
-      { role: "user", content: prompt },
-    ],
-    { temperature: 0.35 }
-  );
-}
-
-export async function runLiveResearch(profile: FounderProfile): Promise<ResearchPack> {
-  const fetchedAt = new Date().toISOString();
-  const logs: string[] = [];
-  const sources: Source[] = [];
-  const seed = downloadedSeed();
-  const competitors = new Set<string>();
-  const marketSignals = new Set<string>();
-  const opportunities = new Set<string>();
-  const skillResources = new Set<string>();
-  const focusedQuery = encodeURIComponent(`${profile.rawIdea} ${profile.targetUser} startup validation`);
-  const broadQuery = encodeURIComponent("startup validation founder customer discovery MVP");
-
-  logs.push("Queued Market Agent, Competitor Agent, Opportunity Agent, Skill Agent, and Source Quality Agent.");
-
-  const tasks = await Promise.allSettled([
-    fetchJson(`https://hn.algolia.com/api/v1/search?query=${focusedQuery}&tags=story&hitsPerPage=5`),
-    fetchJson(`https://hn.algolia.com/api/v1/search?query=${broadQuery}&tags=story&hitsPerPage=5`),
-    fetchJson(`https://api.github.com/search/repositories?q=${focusedQuery}&sort=stars&order=desc&per_page=5`),
-    fetchJson(`https://api.github.com/search/repositories?q=${broadQuery}&sort=stars&order=desc&per_page=5`),
-    fetchJson(`https://api.worldbank.org/v2/country/${isIndia(profile) ? "IND" : "WLD"}/indicator/IC.BUS.NREG?format=json&per_page=5`),
-    fetchTextSnippet("https://esco.ec.europa.eu/"),
-    fetchTextSnippet("https://www.startupindia.gov.in/"),
-  ]);
-
-  logs.push("Fetched founder pain and competitor signals from public web APIs.");
-
-  const [hnFocused, hnBroad, githubFocused, githubBroad, worldBank, esco, startupIndia] = tasks;
-  const hnHits = [
-    ...(hnFocused.status === "fulfilled" ? hnFocused.value?.hits || [] : []),
-    ...(hnBroad.status === "fulfilled" ? hnBroad.value?.hits || [] : []),
-  ].slice(0, 5);
-  let usedSeedHn = false;
-  if (!hnHits.length && Array.isArray(seed?.hackerNewsFounderValidationSignals)) {
-    seed.hackerNewsFounderValidationSignals.forEach((hit: { title?: string; url?: string; points?: number; error?: string }) => {
-      if (hit.title && !hit.error) {
-        usedSeedHn = true;
-        marketSignals.add(`Downloaded community signal: ${hit.title}`);
-        sources.push({
-          id: `seed-hn-${hit.title}`,
-          title: hit.title,
-          url: hit.url || "https://hn.algolia.com/",
-          type: "downloaded community discussion",
-          label: "Community signal",
-          snippet: typeof hit.points === "number" ? `${hit.points} public discussion points` : "Downloaded by npm run ingest",
-          fetchedAt,
-        });
-      }
+    const data = await json(response); if (!response.ok) throw providerErrorFromResponse("gemini", response);
+    const candidate = results(data.candidates)[0];
+    const metadata = candidate?.groundingMetadata as Record<string, unknown> | undefined;
+    return results(metadata?.groundingChunks).flatMap((chunk) => {
+      const web = chunk.web as Record<string, unknown> | undefined;
+      const url = typeof web?.uri === "string" ? web.uri : "";
+      return url ? [{ title: typeof web?.title === "string" ? web.title : host(url), url, snippet: "", provider: "gemini_grounding" as const, query: item.query, category: item.category }] : [];
     });
-    logs.push("Used downloaded Hacker News seed data from data/live-research-seed.json.");
-  }
-
-  if (hnHits.length) {
-    const hits = hnHits;
-    hits.forEach((hit: { title?: string; url?: string; objectID?: string }) => {
-      if (hit.title) {
-        marketSignals.add(`Community signal: ${hit.title}`);
-        sources.push({
-          id: `hn-${hit.objectID || hit.title}`,
-          title: hit.title,
-          url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
-          type: "community discussion",
-          label: "Community signal",
-          snippet: "Hacker News/Algolia public discussion result",
-          fetchedAt,
-        });
-      }
-    });
-    logs.push(`Scanned ${hits.length} community discussion signals from Hacker News Algolia.`);
-  } else if (!usedSeedHn) {
-    logs.push("Hacker News Algolia fetch failed, keeping fallback pain-signal analysis.");
-  }
-
-  const githubRepos = [
-    ...(githubFocused.status === "fulfilled" ? githubFocused.value?.items || [] : []),
-    ...(githubBroad.status === "fulfilled" ? githubBroad.value?.items || [] : []),
-  ].slice(0, 5);
-  let usedSeedGithub = false;
-  if (!githubRepos.length && Array.isArray(seed?.githubStartupValidationRepos)) {
-    seed.githubStartupValidationRepos.forEach((repo: { fullName?: string; url?: string; description?: string; stars?: number; error?: string }) => {
-      if (repo.fullName && !repo.error) {
-        usedSeedGithub = true;
-        competitors.add(repo.fullName);
-        sources.push({
-          id: `seed-github-${repo.fullName}`,
-          title: repo.fullName,
-          url: repo.url || "https://github.com",
-          type: "downloaded open-source alternative",
-          label: "Inferred",
-          snippet: repo.description || `${repo.stars || 0} stars`,
-          fetchedAt,
-        });
-      }
-    });
-    logs.push("Used downloaded GitHub repository seed data from data/live-research-seed.json.");
-  }
-
-  if (githubRepos.length) {
-    const repos = githubRepos;
-    repos.forEach((repo: { full_name?: string; html_url?: string; description?: string }) => {
-      if (repo.full_name) {
-        competitors.add(repo.full_name);
-        sources.push({
-          id: `github-${repo.full_name}`,
-          title: repo.full_name,
-          url: repo.html_url || "https://github.com",
-          type: "open-source alternative",
-          label: "Inferred",
-          snippet: repo.description || "GitHub repository search result",
-          fetchedAt,
-        });
-      }
-    });
-    logs.push(`Compared ${repos.length} public GitHub alternatives or adjacent tools.`);
-  } else if (!usedSeedGithub) {
-    logs.push("GitHub repository search failed, keeping manual competitor baseline.");
-  }
-
-  if (worldBank.status === "fulfilled") {
-    const values = Array.isArray(worldBank.value?.[1]) ? worldBank.value[1] : [];
-    const newest = values.find((row: { value?: number }) => typeof row.value === "number");
-    if (newest) {
-      marketSignals.add(`World Bank new-business-registration signal: ${newest.value} in ${newest.date}.`);
-    }
-    sources.push({
-      id: "world-bank-live",
-      title: "World Bank new business density / registrations API",
-      url: "https://api.worldbank.org/v2/",
-      type: "macro entrepreneurship data",
-      label: "Approximate",
-      snippet: newest ? `Latest available value ${newest.value} (${newest.date})` : "Fetched, but no numeric value returned.",
-      fetchedAt,
-    });
-    logs.push("Fetched World Bank entrepreneurship macro indicator for market context.");
-  } else {
-    const newest = Array.isArray(seed?.worldBankIndiaNewBusinesses) ? seed.worldBankIndiaNewBusinesses[0] : null;
-    if (newest?.value) {
-      marketSignals.add(`Downloaded World Bank new-business-registration signal: ${newest.value} in ${newest.date}.`);
-      sources.push({
-        id: "seed-world-bank",
-        title: "World Bank new businesses registered snapshot",
-        url: "https://api.worldbank.org/v2/",
-        type: "downloaded macro entrepreneurship data",
-        label: "Approximate",
-        snippet: `Downloaded value ${newest.value} (${newest.date})`,
-        fetchedAt,
-      });
-      logs.push("Used downloaded World Bank snapshot from data/live-research-seed.json.");
-    }
-    logs.push("World Bank fetch failed, keeping source registry fallback.");
-  }
-
-  if (esco.status === "fulfilled") {
-    skillResources.add("Map missing skills against ESCO categories: user research, prototyping, analytics, and communication.");
-    sources.push({ id: "esco-live", title: "ESCO skills taxonomy", url: "https://esco.ec.europa.eu/", type: "official skills framework", label: "Official source", snippet: esco.value, fetchedAt });
-    logs.push("Checked ESCO as the official skill taxonomy reference.");
-  }
-
-  if (startupIndia.status === "fulfilled" || isIndia(profile)) {
-    opportunities.add("Check Startup India, DPIIT recognition, and MAARG mentorship only after eligibility is verified on the official site.");
-    sources.push({ id: "startup-india-live", title: "Startup India / DPIIT / MAARG", url: "https://www.startupindia.gov.in/", type: "official India opportunity", label: "Official source", snippet: startupIndia.status === "fulfilled" ? startupIndia.value : "India founder fallback opportunity", fetchedAt });
-    logs.push("Checked Startup India/DPIIT/MAARG as country-specific opportunity references.");
-  }
-
-  sourceRegistry.forEach((source) => {
-    if (!sources.some((item) => item.id === source.id || item.url === source.url)) {
-      sources.push({ ...source, fetchedAt, snippet: "Seed RAG source registry fallback" });
-    }
   });
-
-  const pack: ResearchPack = {
-    mode: sources.some((source) => source.fetchedAt === fetchedAt && !source.snippet?.includes("fallback")) ? "hybrid" : "fallback",
-    fetchedAt,
-    logs,
-    sources,
-    competitors: competitors.size ? Array.from(competitors) : ["Manual mentoring", "Generic AI chatbots", "Startup templates"],
-    marketSignals: marketSignals.size ? Array.from(marketSignals) : ["No fresh market signal fetched; use problem interviews as primary evidence."],
-    opportunities: opportunities.size ? Array.from(opportunities) : ["Use university incubators, founder office hours, and hackathon communities before fundraising."],
-    skillResources: skillResources.size ? Array.from(skillResources) : ["USAII learning path: customer discovery, MVP design, AI prototyping, and founder communication."],
-  };
-
-  const aiSummary = await researchSummary(profile, pack).catch(() => undefined);
-  const provider = getActiveProvider();
+}
+async function tavily(item: PlanItem): Promise<RawResult[]> {
+  return runWithProviderKey("tavily", async (key) => {
+    const response = await fetchTimed("https://api.tavily.com/search", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ query: item.query, search_depth: item.category === "competitor" ? "advanced" : "basic", max_results: 5, include_answer: false, include_raw_content: false }) });
+    const data = await json(response); if (!response.ok) throw providerErrorFromResponse("tavily", response);
+    return results(data.results).map((entry) => ({ title: String(entry.title || host(String(entry.url || ""))), url: String(entry.url || ""), snippet: String(entry.content || ""), provider: "tavily" as const, query: item.query, category: item.category }));
+  });
+}
+async function exa(item: PlanItem): Promise<RawResult[]> {
+  return runWithProviderKey("exa", async (key) => {
+    const response = await fetchTimed("https://api.exa.ai/search", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key }, body: JSON.stringify({ query: item.query, type: "auto", ...(item.category === "competitor" ? { category: "company" } : {}), numResults: 5, contents: { text: { maxCharacters: 900 } } }) });
+    const data = await json(response); if (!response.ok) throw providerErrorFromResponse("exa", response);
+    return results(data.results).map((entry) => ({ title: String(entry.title || host(String(entry.url || ""))), url: String(entry.url || ""), snippet: String(entry.text || ""), provider: "exa" as const, query: item.query, category: item.category }));
+  });
+}
+async function serpapi(item: PlanItem): Promise<RawResult[]> {
+  return runWithProviderKey("serpapi", async (key) => {
+    const url = new URL("https://serpapi.com/search"); url.searchParams.set("engine", "google"); url.searchParams.set("q", item.query); url.searchParams.set("api_key", key); url.searchParams.set("num", "5");
+    const response = await fetchTimed(url.toString()); const data = await json(response);
+    if (!response.ok || typeof data.error === "string") throw providerErrorFromResponse("serpapi", response);
+    return results(data.organic_results).map((entry) => ({ title: String(entry.title || host(String(entry.link || ""))), url: String(entry.link || ""), snippet: String(entry.snippet || ""), provider: "serpapi" as const, query: item.query, category: item.category }));
+  });
+}
+async function google(item: PlanItem): Promise<RawResult[]> {
+  if (!process.env.GOOGLE_SEARCH_ENGINE_ID) return [];
+  return runWithProviderKey("google", async (key) => {
+    const url = new URL("https://www.googleapis.com/customsearch/v1"); url.searchParams.set("key", key); url.searchParams.set("cx", process.env.GOOGLE_SEARCH_ENGINE_ID!); url.searchParams.set("q", item.query); url.searchParams.set("num", "5");
+    const response = await fetchTimed(url.toString()); const data = await json(response); if (!response.ok) throw providerErrorFromResponse("google", response);
+    return results(data.items).map((entry) => ({ title: String(entry.title || host(String(entry.link || ""))), url: String(entry.link || ""), snippet: String(entry.snippet || ""), provider: "google" as const, query: item.query, category: item.category }));
+  });
+}
+export function configuredResearchProviderNames(env: NodeJS.ProcessEnv = process.env) {
+  return (["gemini", "tavily", "exa", "serpapi", "google"] as const).filter((provider) => getProviderPoolStatus(provider, env).available && (provider !== "google" || Boolean(env.GOOGLE_SEARCH_ENGINE_ID)));
+}
+function classify(result: RawResult): ResearchSource["sourceType"] {
+  const domain = host(result.url);
+  const text = `${domain} ${result.title}`.toLowerCase();
+  if (/\.gov\.|worldbank|oecd|europa\.eu|startupindia/.test(text)) return "official";
+  if (/g2\.com|capterra|trustpilot|play\.google|apps\.apple/.test(text)) return "review";
+  if (/reddit|ycombinator|indiehackers/.test(text)) return "community_signal";
+  if (/dataset|kaggle|data\./.test(text)) return "dataset";
+  if (/gartner|forrester|marketresearch|grandview/.test(text)) return "market_report";
+  if ((result.category === "competitor" || result.category === "pricing") && isLikelyMarketCompetitor(result.title, result.url)) return "competitor";
+  return "blog";
+}
+const quality = (type: ResearchSource["sourceType"], verified: boolean) => Math.max(0.1, ({ official: .95, competitor: .82, review: .8, dataset: .86, market_report: .68, community_signal: .58, blog: .42, fallback: .1 }[type]) - (verified ? 0 : .18));
+async function normalize(raw: RawResult, profile: FounderProfile, index: number): Promise<ResearchSource> {
+  let verified = false;
+  try { verified = (await fetchTimed(raw.url, { method: "HEAD" })).ok; } catch { /* search result remains unverified */ }
+  const sourceType = classify(raw);
+  const relevanceScore = Math.min(1, overlap(`${profile.rawIdea} ${profile.targetUser} ${profile.whyItMatters}`, `${raw.title} ${raw.snippet}`) + (raw.category === "competitor" ? .1 : 0));
+  return { id: `source-${index + 1}`, title: raw.title.slice(0, 180), url: raw.url, snippet: raw.snippet.slice(0, 900), sourceType, supports: raw.category, limitation: verified ? (sourceType === "competitor" ? "Vendor claims require independent customer validation." : "Public evidence may not represent the exact target segment.") : "The result was discovered through search but could not be independently opened in this run.", confidence: relevanceScore >= .55 && quality(sourceType, verified) >= .7 ? "high" : relevanceScore >= .25 ? "medium" : "low", provider: raw.provider, query: raw.query, verified, relevanceScore, qualityScore: quality(sourceType, verified) };
+}
+function claimFor(source: ResearchSource): EvidenceClaim {
+  const category = source.supports === "pricing" ? "pricing" : source.supports === "competitor" ? "competitor" : source.supports === "demand" ? "demand" : source.supports === "problem" ? "problem" : source.supports === "opportunity" ? "opportunity" : "feasibility";
+  const evidenceType: EvidenceClaim["evidenceType"] = source.sourceType === "official" ? "official" : source.sourceType === "competitor" ? "competitor_primary" : source.sourceType === "review" ? "review" : source.sourceType === "community_signal" ? "community_signal" : source.sourceType === "dataset" ? "dataset" : source.sourceType === "market_report" ? "market_report" : "inference";
+  return { id: `claim-${source.id}`, claim: `${source.title} provides ${source.supports} context for this direction.`, category, evidenceType, sourceIds: source.id ? [source.id] : [], support: source.relevanceScore >= .22 ? "supports" : "context_only", confidence: source.confidence, limitation: source.limitation, relevanceScore: source.relevanceScore, qualityScore: source.qualityScore };
+}
+export async function runLiveResearch(profile: FounderProfile): Promise<ResearchPack> {
+  const plan = createResearchPlan(profile);
+  const logs = ["Created a targeted evidence plan.", "Researching live sources.", "Reviewing search results."];
+  const providers = { gemini, tavily, exa, serpapi, google };
+  const active = configuredResearchProviderNames();
+  const raw: RawResult[] = [];
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(3, plan.length) }, async () => {
+    while (cursor < plan.length) {
+      const item = plan[cursor++];
+      for (const provider of active) {
+        try {
+          const found = (await providers[provider](item)).filter((entry) => entry.url && entry.title);
+          if (found.length) {
+            raw.push(...found);
+            const needsProduct = item.category === "competitor" || item.category === "pricing";
+            if (!needsProduct || found.some((entry) => isLikelyMarketCompetitor(entry.title, entry.url))) break;
+          }
+        } catch { /* ordered fallback */ }
+      }
+    }
+  }));
+  const deduped = [...new Map(raw.map((entry) => [entry.url.split("#")[0], entry])).values()].slice(0, 40);
+  const normalized = await Promise.all(deduped.map((entry, index) => normalize(entry, profile, index)));
+  const sources = normalized.filter((source) => source.relevanceScore >= .08 && (source.sourceType !== "competitor" || isMarketCompetitorUrl(source.url))).slice(0, 16);
+  if (!sources.length) {
+    const fallback: Source = { id: "offline-analysis", title: "Limited offline analysis", url: "", type: "fallback", label: "Fallback analysis", snippet: "Live research is unavailable right now, so LaunchPilot used a limited offline analysis. Validate these findings before making decisions.", provider: "offline", verified: false, relevanceScore: 0, qualityScore: .1, limitation: "No external market source was retrieved." };
+    return { mode: "fallback", fetchedAt: new Date().toISOString(), logs: [...logs, "Live research unavailable. Limited offline analysis prepared."], plan, sources: [fallback], evidenceClaims: [], competitors: [], marketSignals: ["No live demand signal was retained."], opportunities: [], skillResources: [] };
+  }
+  logs.push(`Retained ${sources.length} relevant sources.`, "Checking competitor pages.", "Evaluating evidence.");
+  const display: Source[] = sources.map((source) => ({ id: source.id!, title: source.title, url: source.url, type: source.sourceType, label: source.verified && source.qualityScore >= .4 ? "Verified" : "Needs validation", snippet: source.snippet, provider: source.provider, query: source.query, verified: source.verified, relevanceScore: source.relevanceScore, qualityScore: source.qualityScore, limitation: source.limitation }));
+  const claims = sources.map(claimFor);
   return {
-    ...pack,
-    mode: aiSummary ? "live" : pack.mode,
-    aiSummary,
-    logs: aiSummary
-      ? [...pack.logs, `Generated synthesis with ${provider === "grok" ? "Grok" : "Groq Llama"} using retrieved sources.`]
-      : [
-          ...pack.logs,
-          "GROK_API_KEY / GROQ_API_KEY not configured or request failed; used retrieved data plus deterministic reasoning.",
-        ],
+    mode: sources.some((source) => source.verified) ? "live" : "hybrid", fetchedAt: new Date().toISOString(), logs, plan, sources: display, evidenceClaims: claims,
+    competitors: sources.filter((source) => source.sourceType === "competitor" && source.relevanceScore >= .2).map((source) => source.title).slice(0, 8),
+    marketSignals: claims.filter((claim) => claim.category === "demand" || claim.category === "problem").map((claim) => claim.claim).slice(0, 6),
+    opportunities: sources.filter((source) => source.sourceType === "official" && source.supports === "opportunity").map((source) => `${source.title} — verify current eligibility on the official page.`).slice(0, 5),
+    skillResources: [],
   };
 }
-
-export async function generateResearchedBrief(profile: FounderProfile): Promise<LaunchBrief> {
+export async function generateResearchedBrief(profile: FounderProfile) {
   const research = await runLiveResearch(profile);
   return generateLaunchBrief(profile, research);
 }

@@ -7,7 +7,8 @@ export type VoiceProvider = "gemini-live" | "web-speech" | "text-fallback";
 
 export type VoiceConfig = {
   provider: VoiceProvider;
-  apiKey?: string;
+  ephemeralToken?: string;
+  model?: string;
   language?: string;
   voice?: string;
 };
@@ -20,6 +21,7 @@ export type VoiceEvent =
   | { type: "thinking" }
   | { type: "speaking"; text: string }
   | { type: "audio"; data: ArrayBuffer }
+  | { type: "notice"; message: string }
   | { type: "error"; message: string }
   | { type: "end" };
 
@@ -47,14 +49,13 @@ export function detectAvailableProvider(): VoiceProvider {
       return "web-speech";
     }
 
-    // Gemini Live requires a client-exposed key; prefer Web Speech when available
-    const hasGeminiKey = !!process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    if (hasGeminiKey) {
-      return "gemini-live";
-    }
   }
 
   return "text-fallback";
+}
+
+export function liveClientConfig(token: string, model = "gemini-3.1-flash-live-preview"): VoiceConfig {
+  return { provider: "gemini-live", ephemeralToken: token, model, language: "en-IN" };
 }
 
 /**

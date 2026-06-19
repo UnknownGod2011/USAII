@@ -2,21 +2,21 @@ import type { FounderIntake } from "@/lib/intake/schema";
 
 export const INTERVIEW_TOPIC_FIELDS = [
   "name",
-  "projectName",
   "location",
+  "rawIdea",
+  "targetUser",
+  "problem",
   "status",
   "hoursPerWeek",
   "budget",
   "skills",
   "teamStatus",
   "stage",
-  "rawIdea",
-  "targetUser",
-  "problem",
   "evidenceLevel",
   "alternatives",
   "thirtyDayGoal",
   "openToModification",
+  "projectName",
 ] as const;
 
 export type InterviewTopicField = (typeof INTERVIEW_TOPIC_FIELDS)[number];
@@ -209,17 +209,7 @@ export function getInterviewProgress(collectedFields: CollectedFields): {
   total: number;
   percentage: number;
 } {
-  const required: InterviewTopicField[] = [
-    "name",
-    "location",
-    "status",
-    "hoursPerWeek",
-    "stage",
-    "rawIdea",
-    "targetUser",
-    "problem",
-    "thirtyDayGoal",
-  ];
+  const required: InterviewTopicField[] = INTERVIEW_TOPIC_FIELDS.filter((field) => field !== "projectName");
   const current = required.filter((field) => Boolean(collectedFields[field]?.trim())).length;
   const total = required.length;
   return {
@@ -271,7 +261,12 @@ export function buildIntakeFromFields(
     alternatives: fields.alternatives || "",
     thirtyDayGoal: fields.thirtyDayGoal || "",
     openToModification,
+    accessibleCommunities: fields.rawIdea === "no idea yet" ? fields.targetUser || undefined : undefined,
+    noticedProblems: fields.rawIdea === "no idea yet" ? fields.problem || undefined : undefined,
+    reachableUsers: fields.rawIdea === "no idea yet" ? fields.alternatives || undefined : undefined,
     transcript: transcript.map((entry) => `${entry.role}: ${entry.content}`),
+    answerValidations: [],
+    skippedOrUnclearFields: [],
   };
 }
 

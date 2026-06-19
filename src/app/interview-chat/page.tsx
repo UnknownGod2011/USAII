@@ -4,8 +4,8 @@ import { DotFieldBackground } from "@/components/animations/DotFieldBackground";
 import { Nav } from "@/components/Nav";
 import { Badge } from "@/components/Badge";
 import { ChatTranscriptPanel } from "@/components/ChatTranscriptPanel";
-import { PublishProjectButton } from "@/components/projects/PublishProjectButton";
 import {
+  buildIntakeFromFields,
   getInterviewProgress,
   mergeCollectedFields,
   requestInterviewTurn,
@@ -15,7 +15,7 @@ import { isIrrelevantFounderQuestion, redirectMessage } from "@/lib/guardrails";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getProject } from "@/lib/projects/firestore";
 import { playClickSound } from "@/lib/sounds/click";
 import { mergeWithInterviewPrefill } from "@/lib/users/prefill";
@@ -24,6 +24,7 @@ type ChatMessage = { role: "assistant" | "user"; content: string; status?: strin
 
 function InterviewChatPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectId = searchParams.get("projectId") ?? undefined;
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -32,6 +33,7 @@ function InterviewChatPageInner() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [interviewComplete, setInterviewComplete] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   const bootstrapRef = useRef(false);
   const interviewCompleteRef = useRef(false);
@@ -105,7 +107,7 @@ function InterviewChatPageInner() {
       const postInterview = interviewCompleteRef.current;
       const turn = await requestInterviewTurn(nextConversation, {
         postInterview,
-        collectedFields: postInterview ? collectedFields : undefined,
+        collectedFields,
       });
       const mergedFields = mergeCollectedFields(collectedFields, turn.collectedFields);
       setCollectedFields(mergedFields);
@@ -121,6 +123,19 @@ function InterviewChatPageInner() {
       if (turn.interviewComplete) {
         interviewCompleteRef.current = true;
         setInterviewComplete(true);
+        setFinalizing(true);
+        const finalConversation = [...nextConversation, assistantMessage];
+        const intake = buildIntakeFromFields(mergedFields, finalConversation);
+        const response = await fetch("/api/intake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(intake),
+        });
+        const saved = await response.json();
+        if (!response.ok) throw new Error(saved.error || "Could not save your founder intake.");
+        localStorage.setItem("launchpilot-intake", JSON.stringify(intake));
+        localStorage.setItem("launchpilot-startup-idea-id", saved.startupIdeaId);
+        router.push(`/validation?ideaId=${encodeURIComponent(saved.startupIdeaId)}`);
       }
     } catch (error) {
       playClickSound();
@@ -136,11 +151,11 @@ function InterviewChatPageInner() {
       ]);
     } finally {
       setIsProcessing(false);
+      setFinalizing(false);
     }
   };
 
   const progress = getInterviewProgress(collectedFields);
-  const canPublish = conversation.some((entry) => entry.role === "user");
   const voiceHref = projectId ? `/interview-voice?projectId=${projectId}` : "/interview-voice";
 
   return (
@@ -204,24 +219,13 @@ function InterviewChatPageInner() {
                 <div>
                   <h2 className="font-semibold text-white">Live AI interview</h2>
                   <p className="mt-3 text-sm leading-6 text-lp-muted">
-                    {projectId
-                      ? "Pick up where you left off, then publish to update your project."
-                      : "Complete the conversation, then publish to generate your project blueprint."}
+                    Complete the 15-question conversation. LaunchPilot automatically saves your context and starts idea validation.
                   </p>
                 </div>
                 {interviewComplete && (
                   <p className="font-mono text-xs text-lp-subtle">
-                    Interview complete — ask anything else, then publish when ready.
+                    {finalizing ? "Saving your context and opening validation…" : "Interview complete. Opening validation…"}
                   </p>
-                )}
-                {canPublish && (
-                  <PublishProjectButton
-                    collectedFields={collectedFields}
-                    transcript={conversation}
-                    projectId={projectId}
-                    label={projectId ? "Update project" : "Publish project"}
-                    className="btn-primary w-full"
-                  />
                 )}
                 <Link href={voiceHref} className="btn-secondary block w-full text-center">
                   Nevermind I want voice!

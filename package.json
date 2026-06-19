@@ -3,14 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:setup": "node scripts/setup-db.mjs",
+    "predev": "npm run db:setup",
     "dev": "next dev",
+    "prebuild": "npm run db:setup",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "ingest": "node scripts/ingest.mjs"
+    "ingest": "node scripts/ingest.mjs",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@google/genai": "^2.8.0",
+    "@prisma/client": "^6.19.1",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "chart.js": "^4.5.1",
@@ -39,6 +45,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "jsdom": "^29.1.1",
+    "prisma": "^6.19.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.9"

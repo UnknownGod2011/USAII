@@ -1,0 +1,195 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String          @id @default(cuid())
+  name           String
+  email          String          @unique
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  intakes        FounderIntake[]
+  ideas          StartupIdea[]
+  researchRuns   ResearchRun[]
+  workspaceItems WorkspaceItem[]
+  agentRuns      AgentRun[]
+  chatMessages   ChatMessage[]
+}
+
+model FounderIntake {
+  id                     String             @id @default(cuid())
+  userId                 String
+  name                   String
+  locationCountry        String
+  locationCity           String?
+  status                 String
+  hoursPerWeek           Int
+  budget                 String
+  skillsJson             String
+  teamStatus             String
+  stage                  String
+  rawIdea                String
+  targetUser             String
+  problem                String
+  evidenceLevel          String
+  alternatives           String
+  thirtyDayGoal          String
+  openToModification     Boolean
+  transcriptJson         String
+  skippedOrUnclearJson   String
+  discoveryJson          String             @default("{}")
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answerValidations      AnswerValidation[]
+  ideas                  StartupIdea[]
+
+  @@index([userId])
+}
+
+model AnswerValidation {
+  id                 String        @id @default(cuid())
+  intakeId           String
+  questionId         Int
+  originalQuestion   String
+  userAnswer         String
+  expectedField      String
+  isUsable           Boolean
+  qualityScore       Float
+  extractedValueJson String
+  issuesJson         String
+  followUpQuestion   String?
+  normalizedAnswer   String
+  provider           String        @default("deterministic-fallback")
+  createdAt          DateTime      @default(now())
+  intake             FounderIntake @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+
+  @@index([intakeId])
+}
+
+model StartupIdea {
+  id               String          @id @default(cuid())
+  userId           String
+  intakeId         String
+  name             String
+  originalIdea     String
+  finalizedIdea    String
+  targetUser       String
+  problemStatement String
+  status           String          @default("draft")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  intake           FounderIntake   @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  researchRuns     ResearchRun[]
+  workspaceItems   WorkspaceItem[]
+  agentRuns        AgentRun[]
+  chatMessages     ChatMessage[]
+
+  @@index([userId])
+}
+
+model ResearchRun {
+  id                 String           @id @default(cuid())
+  userId             String
+  startupIdeaId      String
+  status             String
+  evidenceScore      Int
+  verdict            String
+  strongestSignal    String
+  weakestSignal      String
+  reasoning          String
+  whatCouldBeWrong   String
+  nextValidationStep String
+  fallbackUsed       Boolean
+  breakdownJson      String
+  intakeJson         String           @default("{}")
+  researchPlanJson   String           @default("[]")
+  evidenceClaimsJson String           @default("[]")
+  logsJson           String           @default("[]")
+  packJson           String           @default("{}")
+  scoreJson          String           @default("{}")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startupIdea        StartupIdea      @relation(fields: [startupIdeaId], references: [id], onDelete: Cascade)
+  sources            ResearchSource[]
+
+  @@index([userId, startupIdeaId])
+}
+
+model ResearchSource {
+  id             String      @id @default(cuid())
+  researchRunId  String
+  title          String
+  url            String
+  snippet        String
+  sourceType     String
+  supports       String
+  limitation     String
+  confidence     String
+  provider       String      @default("offline")
+  query          String?
+  verified       Boolean     @default(false)
+  relevanceScore Float       @default(0)
+  qualityScore   Float       @default(0)
+  createdAt      DateTime    @default(now())
+  researchRun    ResearchRun @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+
+  @@index([researchRunId])
+}
+
+model WorkspaceItem {
+  id            String      @id @default(cuid())
+  userId        String
+  startupIdeaId String
+  type          String
+  title         String
+  contentJson   String
+  markdown      String
+  sourcesJson   String
+  confidence    String
+  stale         Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startupIdea   StartupIdea @relation(fields: [startupIdeaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startupIdeaId])
+}
+
+model AgentRun {
+  id            String      @id @default(cuid())
+  userId        String
+  startupIdeaId String
+  agentName     String
+  status        String
+  btsLinesJson  String
+  outputJson    String
+  sourcesJson   String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startupIdea   StartupIdea @relation(fields: [startupIdeaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startupIdeaId])
+}
+
+model ChatMessage {
+  id            String      @id @default(cuid())
+  userId        String
+  startupIdeaId String
+  role          String
+  content       String
+  metadataJson  String
+  createdAt     DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startupIdea   StartupIdea @relation(fields: [startupIdeaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startupIdeaId])
+}

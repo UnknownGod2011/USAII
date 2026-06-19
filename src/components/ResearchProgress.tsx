@@ -10,6 +10,7 @@ type ResearchProgressProps = {
 };
 
 export function ResearchProgress({ steps, currentStep }: ResearchProgressProps) {
+  void currentStep;
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold text-stone-950">Research in progress</h2>

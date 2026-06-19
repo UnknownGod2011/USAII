@@ -1,4 +1,5 @@
 import type { IVoiceProvider, VoiceConfig, VoiceEventHandler, VoiceProvider } from "./voiceProvider";
+import { cancelSpeech, speakNaturally } from "./speechSynthesis";
 
 /**
  * Text Fallback Provider
@@ -28,15 +29,13 @@ export class TextFallbackProvider implements IVoiceProvider {
   }
 
   async send(text: string): Promise<void> {
-    // In text mode, just echo back through events
-    this.eventHandler({
-      type: "transcript",
-      text,
-      isFinal: true,
-    });
+    this.eventHandler({ type: "speaking", text });
+    await speakNaturally(text, this.config.language || "en-IN");
+    this.eventHandler({ type: "listening" });
   }
 
   stop(): void {
+    cancelSpeech();
     this.eventHandler({ type: "end" });
   }
 }

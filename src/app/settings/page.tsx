@@ -4,11 +4,8 @@ import { Nav } from "@/components/Nav";
 import {
   clearLaunchPilotLocalData,
   clearStoredUser,
-  getCurrentUserId,
   getStoredUser,
 } from "@/lib/auth-session";
-import { deleteAllUserProjects } from "@/lib/projects/firestore";
-import { deleteUserProfile } from "@/lib/users/firestore";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -33,28 +30,31 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const sync = () => setSignedIn(!!getStoredUser());
-    sync();
-    setReady(true);
+    const timer = window.setTimeout(() => {
+      sync();
+      setReady(true);
+    }, 0);
     window.addEventListener("launchpilot-auth-change", sync);
-    return () => window.removeEventListener("launchpilot-auth-change", sync);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("launchpilot-auth-change", sync);
+    };
   }, []);
 
-  function handleSignOut() {
+  async function handleSignOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     clearStoredUser();
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/login");
   }
 
   async function handleDeleteAccount() {
-    const userId = getCurrentUserId();
-    if (!userId) return;
-
     setDeleting(true);
     setError(null);
 
     try {
-      await deleteAllUserProjects(userId);
-      await deleteUserProfile(userId);
+      const response = await fetch("/api/account/data", { method: "DELETE" });
+      if (!response.ok) throw new Error("Could not delete account data.");
       clearLaunchPilotLocalData();
       window.dispatchEvent(new Event("launchpilot-auth-change"));
       setConfirmDelete(false);
@@ -120,8 +120,8 @@ export default function SettingsPage() {
           </p>
           <PrivacyList
             items={[
-              "Interview responses are processed server-side by Grok or Groq to run the conversation and generate your roadmap. Optional voice mode may stream through Google's Gemini Live API when configured.",
-              "Research agents query third-party services to ground your project's market research: Tavily, Exa, SerpAPI, and Google Search — your idea and project details may be sent to these services as part of generating research results.",
+              "Interview responses are processed server-side to validate answer quality and structure your founder context. Optional voice mode may use a short-lived secure voice session.",
+              "Research agents query configured live search services to ground market research. Only the idea and context needed for the active research step are sent.",
               "We only send what's needed to run the specific feature you're using — nothing is shared beyond what's required for the interview or research step you triggered.",
             ]}
           />
@@ -151,7 +151,7 @@ export default function SettingsPage() {
           {signedIn && (
             <div className="mt-4 border-t border-white/10 pt-4">
               <p className="text-sm leading-6 text-lp-muted">
-                Delete your account removes your Firestore profile, all projects tied to your email, and clears
+                Delete your account removes your persisted founder profile, research, workspaces, and clears
                 local session data from this browser.
               </p>
               {!confirmDelete ? (
@@ -206,9 +206,8 @@ export default function SettingsPage() {
         <div className="profile-section-card space-y-3">
           <h2 className="profile-section-title">Account &amp; security</h2>
           <p className="text-sm leading-6 text-lp-muted">
-            This is a hackathon build using demo-mode authentication — your email is stored locally in the browser
-            and used as your account identifier. It is not a production-grade login system with password hashing,
-            MFA, or enterprise security controls.
+            This local build uses a signed, HTTP-only session tied to your email. It is suitable for local verification,
+            but it does not yet include password hashing, MFA, email verification, or enterprise identity controls.
           </p>
           <p className="text-sm leading-6 text-lp-muted">
             API keys for AI and research services live in server environment variables only. They are never written

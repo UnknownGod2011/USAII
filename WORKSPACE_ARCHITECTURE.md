@@ -1,40 +1,49 @@
 # Workspace Architecture
 
-LaunchPilot uses a persistent Launch Brief Workspace as the project brain.
+The Launch Brief is the shared persisted source of truth for dashboard, profile, Copilot, and exports.
 
-## Workspace Item Types
+## Data path
 
-- Founder Snapshot
-- Refined Idea
-- Research Notes
-- Competitors / Alternatives
-- Assumptions
-- Risks
-- MVP Plan
-- Current Bottleneck
-- Founder Reality Check
-- Roadmap
-- Pitch Assets
-- Opportunity Cards
-- Saved Decisions
-- Sources
+`FounderIntake → StartupIdea → ResearchRun + ResearchSource → AgentRun → WorkspaceItem`
 
-## Write Path
+Prisma stores user-scoped records. API routes re-check the signed session and user ownership before reading or writing.
 
-The founder interview creates a `FounderProfile`. The agent engine converts that profile into a `LaunchBrief` and writes structured `WorkspaceItem` records.
+## Normalized brief
 
-## Read Path
+`normalizeFounderBrief()` converts raw founder answers into:
 
-The dashboard, Copilot, and exports read from the workspace cards. This keeps important decisions visible after chat scrolls away.
+- clean startup title and one-line idea
+- refined direction
+- target segment and primary user
+- problem and value proposition
+- alternatives and evidence summary
+- founder constraints
+- research focus
+- first validation step
+- clean pitch context
 
-## Clearing Context
+The LLM synthesis layer receives only structured intake, evidence, sources, and deterministic agent outputs. Zod validates the resulting report. A grammatical deterministic report remains available if synthesis fails.
 
-The Privacy page clears local storage keys:
+## Agent persistence
 
-- `launchpilot-user`
-- `launchpilot-profile`
-- `launchpilot-brief`
+Six `AgentRun` records move through queued, working, and complete states:
 
-## Production Path
+1. Market Reality
+2. Assumption & Risk
+3. MVP Scope
+4. Roadmap
+5. Opportunity
+6. Pitch & Communication
 
-For production, replace browser local storage with a database table for profiles, workspace items, sources, agent outputs, and chat history.
+Each record stores progress lines, structured output, confidence, and linked sources. After all agents complete, `WorkspaceItem` records are refreshed transactionally and the finalized idea is updated.
+
+## Read paths
+
+- Dashboard loads `/api/workspace` and polls `/api/workspace/build` while agents run.
+- Profile loads the latest intake, idea, research verdict, score, and workspace state.
+- Copilot receives a project ID, loads the saved brief and sources server-side, then returns a contextual answer with relevant references.
+- Markdown, JSON, and copy exports are generated from the same normalized brief rendered on screen.
+
+## Clearing context
+
+The Privacy page signs out or removes the user-scoped local account data through authenticated API routes. Secrets, raw audio, and provider keys are never stored in workspace records.

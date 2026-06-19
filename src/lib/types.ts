@@ -24,6 +24,7 @@ export type FounderProfile = {
   rawIdea: string;
   targetUser: string;
   whyItMatters: string;
+  currentAlternatives?: string;
   evidence: string[];
   traction: string;
   willingnessToLearn: string;
@@ -39,6 +40,12 @@ export type Source = {
   label: EvidenceLabel;
   snippet?: string;
   fetchedAt?: string;
+  provider?: "gemini_grounding" | "google" | "tavily" | "exa" | "serpapi" | "public_api" | "direct" | "offline";
+  query?: string;
+  verified?: boolean;
+  relevanceScore?: number;
+  qualityScore?: number;
+  limitation?: string;
 };
 
 export type ReasoningCard = {
@@ -73,12 +80,13 @@ export type WorkspaceItem = {
   label: EvidenceLabel;
   confidence: "Low" | "Medium" | "High";
   updatedAt: string;
+  sourceIds?: string[];
 };
 
 export type AgentOutput = {
   name: string;
   role: string;
-  status: "Planned" | "Running" | "Complete";
+  status: "Queued" | "Working" | "Complete" | "Planned" | "Running";
   liveSteps?: string[];
   finding: string;
   whyItMatters: string;
@@ -87,6 +95,7 @@ export type AgentOutput = {
   reasoning: ReasoningCard;
   plan?: string[];
   sources?: Source[];
+  evidenceClaimIds?: string[];
 };
 
 export type FounderScore = {
@@ -103,7 +112,15 @@ export type ResearchPack = {
   mode: "live" | "hybrid" | "fallback";
   fetchedAt: string;
   logs: string[];
+  plan: {
+    id: string;
+    query: string;
+    category: "problem" | "demand" | "competitor" | "pricing" | "opportunity" | "feasibility";
+    purpose: string;
+    preferredSources: string[];
+  }[];
   sources: Source[];
+  evidenceClaims: import("./intake/schema").EvidenceClaim[];
   competitors: string[];
   marketSignals: string[];
   opportunities: string[];
@@ -113,6 +130,10 @@ export type ResearchPack = {
 
 export type LaunchBrief = {
   profile: FounderProfile;
+  normalizedBrief: import("./brief/normalize").NormalizedFounderBrief;
+  executiveSummary: string;
+  validatedDirection: string;
+  whyThisIsSharper: string;
   refinedIdea: string;
   problem: string;
   targetUser: string;
@@ -129,11 +150,22 @@ export type LaunchBrief = {
   weakestPoint: string;
   nextValidationTask: string;
   competitors: string[];
+  marketReality: {
+    summary: string;
+    directCompetitors: import("./brief/normalize").AlternativeMatrixRow[];
+    indirectAlternatives: import("./brief/normalize").AlternativeMatrixRow[];
+    positioningGap: string;
+    noDirectCompetitorMessage?: string;
+  };
   opportunities: string[];
   assumptions: string[];
   risks: string[];
+  riskRegister: import("./brief/normalize").RiskRegisterItem[];
   mvpScope: string[];
+  mvpPlan: import("./brief/normalize").MvpPlan;
   roadmap: { horizon: string; actions: string[] }[];
+  roadmapPlan: import("./brief/normalize").RoadmapPlan;
+  opportunityLayer: import("./brief/normalize").OpportunityItem[];
   skillGaps: string[];
   pitchAssets: {
     oneLinePitch: string;
@@ -145,6 +177,7 @@ export type LaunchBrief = {
   };
   responsibleAINotes: string[];
   research: ResearchPack;
+  evidenceScore?: import("./intake/schema").EvidenceScore;
   sources: Source[];
   agents: AgentOutput[];
   workspace: WorkspaceItem[];

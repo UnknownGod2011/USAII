@@ -1,366 +1,275 @@
+import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
+import { isUnexpectedTranscriptScript } from "./transcriptGuard";
 import type { IVoiceProvider, VoiceConfig, VoiceEventHandler, VoiceProvider } from "./voiceProvider";
 
-/**
- * Gemini Live API Provider
- * Uses WebSocket for real-time voice conversation
- * Reference: https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket
- */
-
 export class GeminiLiveProvider implements IVoiceProvider {
-  private config: VoiceConfig;
-  private eventHandler: VoiceEventHandler;
-  private ws: WebSocket | null = null;
+  private session: Session | null = null;
   private mediaStream: MediaStream | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
   private audioContext: AudioContext | null = null;
-  private isConnected = false;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private processorNode: ScriptProcessorNode | null = null;
+  private processorSink: GainNode | null = null;
+  private micPaused = false;
+  private allowPlayback = false;
+  private serverTurnComplete = false;
+  private nextPlaybackTime = 0;
+  private activePlaybackSources = new Set<AudioBufferSourceNode>();
 
-  constructor(config: VoiceConfig, eventHandler: VoiceEventHandler) {
-    this.config = config;
-    this.eventHandler = eventHandler;
-  }
+  constructor(
+    private readonly config: VoiceConfig,
+    private readonly eventHandler: VoiceEventHandler,
+  ) {}
 
-  isAvailable(): boolean {
-    return !!this.config.apiKey && typeof WebSocket !== "undefined";
+  isAvailable() {
+    return Boolean(
+      this.config.ephemeralToken &&
+      typeof window !== "undefined" &&
+      navigator.mediaDevices?.getUserMedia,
+    );
   }
 
   getProvider(): VoiceProvider {
     return "gemini-live";
   }
 
-  async start(): Promise<void> {
+  async start() {
     if (!this.isAvailable()) {
-      throw new Error("Gemini Live API key not configured");
+      throw new Error("Secure live voice session is unavailable");
     }
 
-    try {
-      // Initialize audio context
-      this.audioContext = new AudioContext({ sampleRate: 16000 });
+    const ai = new GoogleGenAI({
+      apiKey: this.config.ephemeralToken,
+      httpOptions: { apiVersion: "v1alpha" },
+    });
 
-      // Request microphone access
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
+    this.audioContext = new AudioContext();
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
 
-      // Connect to Gemini Live WebSocket
-      await this.connectWebSocket();
-
-      // Start recording
-      this.startRecording();
-
-      this.eventHandler({ type: "listening" });
-    } catch (error) {
-      this.eventHandler({
-        type: "error",
-        message: `Failed to start Gemini Live: ${error instanceof Error ? error.message : "Unknown error"}`,
-      });
-      throw error;
-    }
-  }
-
-  private async connectWebSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Gemini Live API WebSocket endpoint
-        // Format: wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=API_KEY
-        const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.config.apiKey}`;
-
-        this.ws = new WebSocket(wsUrl);
-
-        this.ws.onopen = () => {
-          this.isConnected = true;
-
-          // Send setup message
-          this.sendSetup();
-
-          resolve();
-        };
-
-        this.ws.onmessage = (event) => {
-          this.handleWebSocketMessage(event);
-        };
-
-        this.ws.onerror = (error) => {
+    this.session = await ai.live.connect({
+      model: this.config.model || "gemini-3.1-flash-live-preview",
+      config: {
+        responseModalities: [Modality.AUDIO],
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        temperature: 0.2,
+        systemInstruction:
+          "You are LaunchPilot's English voice transport. Speak only when the client supplies an interview question as text. Read that question naturally in English, once. Never answer microphone audio, never invent founder answers, never translate, and never switch languages.",
+      },
+      callbacks: {
+        onopen: () => this.eventHandler({ type: "listening" }),
+        onmessage: (message) => this.handle(message),
+        onerror: () =>
           this.eventHandler({
             type: "error",
-            message: "WebSocket connection error",
-          });
-          reject(error);
-        };
-
-        this.ws.onclose = () => {
-          this.isConnected = false;
-          this.eventHandler({ type: "end" });
-        };
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  private sendSetup(): void {
-    if (!this.ws || !this.isConnected) return;
-
-    // Send setup configuration
-    const setupMessage = {
-      setup: {
-        model: "models/gemini-2.0-flash-exp",
-        generation_config: {
-          response_modalities: ["AUDIO"],
-          speech_config: {
-            voice_config: {
-              prebuilt_voice_config: {
-                voice_name: "Aoede", // Natural female voice
-              },
-            },
-          },
-        },
-        system_instruction: {
-          parts: [
-            {
-              text: `You are LaunchPilot, a warm and focused founder execution navigator. You are conducting a founder interview with 15 core questions. 
-
-Your role:
-- Ask questions naturally and conversationally
-- Listen carefully to answers
-- If an answer is unclear, vague, or too short, ask a follow-up naturally
-- Keep the conversation moving but don't accept garbage answers
-- Be warm but efficient
-- Do not ask unrelated questions
-- Focus on understanding the founder's idea, constraints, and readiness
-
-You will ask these 15 questions in order, but adapt your wording naturally:
-1. Name
-2. Location (country and city)
-3. Current status (student, professional, etc)
-4. Hours per week available
-5. Budget available
-6. Skills they have
-7. Building alone or with team
-8. Current stage
-9. Describe the idea
-10. Target user
-11. Problem being solved
-12. Evidence they have
-13. Current alternatives users have
-14. 30-day success metric
-15. Open to feedback/changes
-
-After all 15 questions, say: "Thank you for answering the questions. I'm going to carry out a thorough market and feasibility research pass now."`,
-            },
-          ],
-        },
+            message: "Live voice failed. Continue with browser speech or text.",
+          }),
+        onclose: () => this.eventHandler({ type: "end" }),
       },
-    };
-
-    this.ws.send(JSON.stringify(setupMessage));
-  }
-
-  private startRecording(): void {
-    if (!this.mediaStream) return;
-
-    this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-      mimeType: "audio/webm",
     });
 
-    this.mediaRecorder.ondataavailable = async (event) => {
-      if (event.data.size > 0 && this.ws && this.isConnected) {
-        // Convert audio to PCM16 format required by Gemini Live
-        const audioData = await this.convertToPCM16(event.data);
+    this.record();
+  }
 
-        // Send audio chunk
-        const message = {
-          realtime_input: {
-            media_chunks: [
-              {
-                mime_type: "audio/pcm",
-                data: this.arrayBufferToBase64(audioData),
-              },
-            ],
-          },
-        };
+  private record() {
+    if (!this.mediaStream || !this.audioContext) return;
 
-        this.ws.send(JSON.stringify(message));
+    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.processorSink = this.audioContext.createGain();
+    this.processorSink.gain.value = 0;
+
+    const inputRate = this.audioContext.sampleRate;
+    this.processorNode.onaudioprocess = (event) => {
+      if (!this.session || this.micPaused) return;
+
+      const channel = event.inputBuffer.getChannelData(0);
+      const length = Math.max(1, Math.round((channel.length * 16000) / inputRate));
+      const pcm = new Int16Array(length);
+
+      for (let index = 0; index < length; index += 1) {
+        const sample = channel[
+          Math.min(channel.length - 1, Math.floor((index * inputRate) / 16000))
+        ];
+        const value = Math.max(-1, Math.min(1, sample));
+        pcm[index] = value < 0 ? value * 0x8000 : value * 0x7fff;
       }
+
+      this.session.sendRealtimeInput({
+        audio: {
+          data: this.toBase64(pcm.buffer),
+          mimeType: "audio/pcm;rate=16000",
+        },
+      });
     };
 
-    // Capture audio in 100ms chunks for low latency
-    this.mediaRecorder.start(100);
+    this.sourceNode.connect(this.processorNode);
+    this.processorNode.connect(this.processorSink);
+    this.processorSink.connect(this.audioContext.destination);
   }
 
-  private async convertToPCM16(blob: Blob): Promise<ArrayBuffer> {
-    if (!this.audioContext) {
-      throw new Error("AudioContext not initialized");
+  private handle(message: LiveServerMessage) {
+    const input = message.serverContent?.inputTranscription;
+    if (input?.text) {
+      if (isUnexpectedTranscriptScript(input.text)) {
+        if (input.finished) {
+          this.eventHandler({
+            type: "notice",
+            message: "That did not transcribe confidently as English. Please repeat the answer.",
+          });
+        }
+      } else {
+        this.eventHandler({
+          type: "transcript",
+          text: input.text,
+          isFinal: Boolean(input.finished),
+        });
+        if (input.finished) {
+          this.eventHandler({ type: "utterance-ready", text: input.text });
+        }
+      }
     }
 
-    const arrayBuffer = await blob.arrayBuffer();
-    const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-
-    // Convert to 16-bit PCM
-    const pcmData = audioBuffer.getChannelData(0);
-    const pcm16 = new Int16Array(pcmData.length);
-
-    for (let i = 0; i < pcmData.length; i++) {
-      const s = Math.max(-1, Math.min(1, pcmData[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    const output = message.serverContent?.outputTranscription;
+    if (output?.text && this.allowPlayback) {
+      this.eventHandler({ type: "speaking", text: output.text });
     }
 
-    return pcm16.buffer;
+    for (const part of message.serverContent?.modelTurn?.parts || []) {
+      if (
+        this.allowPlayback &&
+        part.inlineData?.data &&
+        part.inlineData.mimeType?.startsWith("audio/")
+      ) {
+        const audio = this.fromBase64(part.inlineData.data);
+        this.eventHandler({ type: "audio", data: audio });
+        this.play(audio);
+      }
+    }
+
+    if (message.serverContent?.interrupted) {
+      this.stopPlayback();
+      this.resumeListening();
+    }
+
+    if (message.serverContent?.turnComplete) {
+      this.serverTurnComplete = true;
+      this.resumeAfterPlayback();
+    }
   }
 
-  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+  private play(buffer: ArrayBuffer) {
+    if (!this.audioContext) return;
+
+    const input = new Int16Array(buffer);
+    const output = new Float32Array(input.length);
+    input.forEach((sample, index) => {
+      output[index] = sample / (sample < 0 ? 0x8000 : 0x7fff);
+    });
+
+    const audio = this.audioContext.createBuffer(1, output.length, 24000);
+    audio.copyToChannel(output, 0);
+
+    const source = this.audioContext.createBufferSource();
+    source.buffer = audio;
+    source.connect(this.audioContext.destination);
+
+    const startAt = Math.max(this.audioContext.currentTime + 0.02, this.nextPlaybackTime);
+    this.nextPlaybackTime = startAt + audio.duration;
+    this.activePlaybackSources.add(source);
+    source.onended = () => {
+      this.activePlaybackSources.delete(source);
+      this.resumeAfterPlayback();
+    };
+    source.start(startAt);
+  }
+
+  private stopPlayback() {
+    for (const source of this.activePlaybackSources) {
+      try {
+        source.stop();
+      } catch {
+        // The source may already have completed.
+      }
+    }
+    this.activePlaybackSources.clear();
+    this.nextPlaybackTime = this.audioContext?.currentTime || 0;
+    this.allowPlayback = false;
+    this.serverTurnComplete = false;
+  }
+
+  private resumeAfterPlayback() {
+    if (!this.serverTurnComplete || this.activePlaybackSources.size > 0) return;
+    this.resumeListening();
+  }
+
+  pauseListening() {
+    this.micPaused = true;
+  }
+
+  resumeListening() {
+    this.allowPlayback = false;
+    this.serverTurnComplete = false;
+    this.micPaused = false;
+    this.eventHandler({ type: "listening" });
+  }
+
+  async send(text: string) {
+    if (!this.session) {
+      throw new Error("Live voice is not connected");
+    }
+
+    this.stopPlayback();
+    this.micPaused = true;
+    this.allowPlayback = true;
+    this.eventHandler({ type: "speaking", text });
+    this.session.sendRealtimeInput({ text });
+  }
+
+  stop() {
+    this.stopPlayback();
+
+    if (this.processorNode) {
+      this.processorNode.onaudioprocess = null;
+      this.processorNode.disconnect();
+    }
+    this.processorSink?.disconnect();
+    this.sourceNode?.disconnect();
+    this.mediaStream?.getTracks().forEach((track) => track.stop());
+
+    this.session?.sendRealtimeInput({ audioStreamEnd: true });
+    this.session?.close();
+    void this.audioContext?.close();
+
+    this.processorNode = null;
+    this.processorSink = null;
+    this.sourceNode = null;
+    this.mediaStream = null;
+    this.session = null;
+    this.audioContext = null;
+    this.eventHandler({ type: "end" });
+  }
+
+  private toBase64(buffer: ArrayBuffer) {
     let binary = "";
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
+    new Uint8Array(buffer).forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
     return btoa(binary);
   }
 
-  private base64ToArrayBuffer(base64: string): ArrayBuffer {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+  private fromBase64(value: string) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
     }
     return bytes.buffer;
-  }
-
-  private handleWebSocketMessage(event: MessageEvent): void {
-    try {
-      const data = JSON.parse(event.data);
-
-      // Handle server content (audio response)
-      if (data.serverContent) {
-        const parts = data.serverContent.modelTurn?.parts || [];
-
-        for (const part of parts) {
-          // Text transcript
-          if (part.text) {
-            this.eventHandler({
-              type: "transcript",
-              text: part.text,
-              isFinal: true,
-            });
-
-            this.eventHandler({
-              type: "speaking",
-              text: part.text,
-            });
-          }
-
-          // Audio data
-          if (part.inlineData && part.inlineData.mimeType === "audio/pcm") {
-            const audioData = this.base64ToArrayBuffer(part.inlineData.data);
-            this.eventHandler({
-              type: "audio",
-              data: audioData,
-            });
-
-            // Play audio
-            this.playAudio(audioData);
-          }
-        }
-      }
-
-      // Handle tool calls if any
-      if (data.toolCall) {
-        // Handle tool calls (not used in this interview flow)
-      }
-
-      // Handle errors
-      if (data.error) {
-        this.eventHandler({
-          type: "error",
-          message: data.error.message || "Unknown error from Gemini Live",
-        });
-      }
-    } catch (error) {
-      console.error("Error parsing WebSocket message:", error);
-    }
-  }
-
-  private async playAudio(audioData: ArrayBuffer): Promise<void> {
-    if (!this.audioContext) return;
-
-    try {
-      // Convert PCM16 to AudioBuffer
-      const pcm16 = new Int16Array(audioData);
-      const floatData = new Float32Array(pcm16.length);
-
-      for (let i = 0; i < pcm16.length; i++) {
-        floatData[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7fff);
-      }
-
-      const audioBuffer = this.audioContext.createBuffer(1, floatData.length, 16000);
-      audioBuffer.copyToChannel(floatData, 0);
-
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioContext.destination);
-      source.start();
-    } catch (error) {
-      console.error("Error playing audio:", error);
-    }
-  }
-
-  async send(text: string): Promise<void> {
-    if (!this.ws || !this.isConnected) {
-      throw new Error("WebSocket not connected");
-    }
-
-    // Send text message
-    const message = {
-      client_content: {
-        turns: [
-          {
-            role: "user",
-            parts: [
-              {
-                text,
-              },
-            ],
-          },
-        ],
-        turn_complete: true,
-      },
-    };
-
-    this.ws.send(JSON.stringify(message));
-  }
-
-  stop(): void {
-    // Stop recording
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      this.mediaRecorder.stop();
-    }
-
-    // Stop media stream
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
-      this.mediaStream = null;
-    }
-
-    // Close WebSocket
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    // Close audio context
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-
-    this.isConnected = false;
-    this.eventHandler({ type: "end" });
   }
 }
