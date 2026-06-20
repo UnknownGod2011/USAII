@@ -342,7 +342,7 @@ export function normalizeFounderBrief(profile: FounderProfile, evidence?: Eviden
       researchFocus: "Validate whether sellers need faster editable design iteration before printing, not another broad design tool.",
       cleanPitchContext: "Apparel sellers need faster customer-order revision loops before print handoff.",
       positioning: "Not another generic design tool. A faster revision workflow for print-ready apparel mockups.",
-      marketRealitySummary: "Same-day custom T-shirt services prove urgency around turnaround time. Design software and print platforms prove existing demand for custom apparel creation. The gap to test is whether sellers need faster editable AI-assisted design iteration before printing.",
+      marketRealitySummary: "Same-day custom T-shirt services show that turnaround time matters, while design software and print platforms confirm an established custom-apparel workflow. These sources do not prove that small sellers will switch or pay for this specific product. The narrow gap to test is faster editable AI-assisted design iteration before printing, starting with five behavior-focused interviews and one manual revision pilot.",
       whyThisIsSharper: "It narrows the idea from general AI T-shirt generation to the measurable workflow delay between customer idea, editable design revision, mockup approval, and print handoff.",
       nextBestAction: firstStep,
       directCompetitors: direct,

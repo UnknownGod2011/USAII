@@ -8,14 +8,23 @@ import { NextResponse } from "next/server";
 
 function relevantReferences(question: string, brief: LaunchBrief) {
   const terms = question.toLowerCase().split(/\W+/).filter((term) => term.length > 3);
+  const lowValuePattern = /\b(dictionary|thesaurus|wiktionary|definition|synonyms?|lyrics?|spotify)\b/i;
   return [...brief.sources]
-    .filter((source) => source.url)
+    .filter((source) =>
+      source.url
+      && !lowValuePattern.test(`${source.title} ${source.url}`)
+      && (source.verified || ["competitor", "official", "community_signal"].includes(source.type))
+    )
     .sort((left, right) => {
       const leftText = `${left.title} ${left.type} ${left.snippet || ""}`.toLowerCase();
       const rightText = `${right.title} ${right.type} ${right.snippet || ""}`.toLowerCase();
       const leftScore = terms.filter((term) => leftText.includes(term)).length + (left.verified ? 1 : 0);
       const rightScore = terms.filter((term) => rightText.includes(term)).length + (right.verified ? 1 : 0);
       return rightScore - leftScore;
+    })
+    .filter((source) => {
+      const text = `${source.title} ${source.type} ${source.snippet || ""}`.toLowerCase();
+      return !terms.length || terms.some((term) => text.includes(term)) || ["competitor", "official"].includes(source.type);
     })
     .slice(0, 3)
     .map((source) => ({ id: source.id, label: source.title, url: source.url }));

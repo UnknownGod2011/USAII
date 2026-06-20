@@ -97,7 +97,7 @@ export async function answerCopilotQuestion(question: string, brief: LaunchBrief
   if (getProviderKeys("gemini").length) {
     try {
       const answer = await callGemini(question, brief, history);
-      if (answer) return { answer, mode: "llm-context" as const };
+      if (answer) return { answer, mode: "gemini-context" as const };
     } catch { /* use fallback */ }
   }
 
@@ -105,7 +105,7 @@ export async function answerCopilotQuestion(question: string, brief: LaunchBrief
   if (xaiKey) {
     try {
       const answer = await callOpenAICompatible(question, brief, history, xaiKey, "https://api.x.ai/v1/chat/completions", process.env.GROK_MODEL || "grok-3-mini");
-      if (answer) return { answer, mode: "llm-context" as const };
+      if (answer) return { answer, mode: "xai-context" as const };
     } catch { /* use fallback */ }
   }
 
@@ -113,7 +113,7 @@ export async function answerCopilotQuestion(question: string, brief: LaunchBrief
   if (groqKey) {
     try {
       const answer = await callOpenAICompatible(question, brief, history, groqKey, "https://api.groq.com/openai/v1/chat/completions", process.env.GROQ_MODEL || "llama-3.3-70b-versatile");
-      if (answer) return { answer, mode: "llm-context" as const };
+      if (answer) return { answer, mode: "groq-context" as const };
     } catch { /* use fallback */ }
   }
 
