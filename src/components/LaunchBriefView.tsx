@@ -68,6 +68,56 @@ function Pill({ value }: { value: string }) {
   return <span className={`inline-flex rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider ${tone[value] || "border-white/15 text-lp-muted"}`}>{value === "Working" ? <span className="shiny-copy">{value}</span> : value}</span>;
 }
 
+function formatVerdict(value: string) {
+  const labels: Record<string, string> = {
+    strong: "Strong — ready for a narrow pilot",
+    promising_needs_modification: "Promising — needs validation",
+    weak: "Weak — needs refinement",
+    reject: "Not ready — rethink direction",
+  };
+  return labels[value] || value.replaceAll("_", " ");
+}
+
+function cleanReportText(value: string) {
+  return value
+    .replace(/\bpromising needs modification\b/gi, "Promising — needs validation")
+    .replace(/\bhave interviewed a few people and they like to the idea\b/gi, "A few informal conversations suggest interest, but this still needs direct behavioral validation")
+    .replace(/\bthey use (?:a )?graphic designer but that(?: is|'s)? too slow\b/gi, "Some users currently rely on graphic designers, but revision speed may be slow")
+    .replace(/\bThe first validation focus is validate\b/gi, "The first validation focus is to validate")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function inlineMarkdown(value: string) {
+  return value.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={`${part}-${index}`} className="font-semibold text-white">{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function CopilotAnswer({ answer }: { answer: string }) {
+  const lines = answer.split(/\r?\n/);
+  return (
+    <div className="space-y-2">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={`space-${index}`} className="h-1" />;
+        const bullet = trimmed.match(/^[-*]\s+(.+)/);
+        const numbered = trimmed.match(/^(\d+)[.)]\s+(.+)/);
+        if (bullet) {
+          return <div key={`${trimmed}-${index}`} className="flex gap-2"><span aria-hidden="true">•</span><span>{inlineMarkdown(bullet[1])}</span></div>;
+        }
+        if (numbered) {
+          return <div key={`${trimmed}-${index}`} className="grid grid-cols-[auto_1fr] gap-2"><span>{numbered[1]}.</span><span>{inlineMarkdown(numbered[2])}</span></div>;
+        }
+        return <p key={`${trimmed}-${index}`}>{inlineMarkdown(trimmed.replace(/^#{1,3}\s+/, ""))}</p>;
+      })}
+    </div>
+  );
+}
+
 function Section({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
   return (
     <section className="terminal-card p-6 md:p-8">
@@ -141,11 +191,11 @@ function AgentProgress({ agents, activeAgent, building }: { agents: AgentOutput[
               </div>
               {status === "Complete" && (
                 <div className="mt-5 border-t border-white/10 pt-4">
-                  <p className="text-sm leading-6 text-white">{agent.finding}</p>
-                  <p className="mt-2 text-xs leading-5 text-lp-muted">{agent.whyItMatters}</p>
+                  <p className="text-sm leading-6 text-white">{cleanReportText(agent.finding)}</p>
+                  <p className="mt-2 text-xs leading-5 text-lp-muted">{cleanReportText(agent.whyItMatters)}</p>
                   <div className="mt-4 border-l border-white/20 pl-3">
                     <p className="mono-label">Recommended move</p>
-                    <p className="mt-2 text-xs leading-5 text-white/90">{agent.reasoning.recommendation}</p>
+                    <p className="mt-2 text-xs leading-5 text-white/90">{cleanReportText(agent.reasoning.recommendation)}</p>
                   </div>
                   <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] text-lp-subtle">
                     <Pill value={agent.confidence} />
@@ -191,7 +241,15 @@ function CopilotPanel({
       </div>
       <textarea value={question} onChange={(event) => onQuestionChange(event.target.value)} className="input-field mt-4 min-h-24" aria-label="Ask LaunchPilot Copilot" />
       <button onClick={() => onAsk()} disabled={asking} className="btn-primary mt-3 w-full">{asking ? "Reading workspace..." : "Ask with context"} <Send className="h-4 w-4" /></button>
-      <div className="mt-4 max-h-64 overflow-y-auto border border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-lp-muted" aria-live="polite">{answer}</div>
+      <div
+        className="mt-4 min-h-24 max-h-[min(28rem,55vh)] overflow-y-auto overscroll-contain break-words border border-white/10 bg-white/[0.03] p-4 pr-3 text-sm leading-6 text-lp-muted [overflow-wrap:anywhere] [scrollbar-gutter:stable]"
+        aria-live="polite"
+        role="region"
+        aria-label="Copilot answer"
+        tabIndex={0}
+      >
+        <CopilotAnswer answer={answer} />
+      </div>
       {references.length > 0 && (
         <div className="mt-4">
           <p className="mono-label">Workspace references</p>
@@ -389,10 +447,10 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
             <div className="min-w-0">
               <p className="mono-label">Launch Brief Workspace</p>
               <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white md:text-6xl">{normalized.cleanStartupTitle}</h1>
-              <p className="mt-5 max-w-3xl text-lg leading-8 text-lp-muted">{normalized.oneLineIdea}</p>
+              <p className="mt-5 max-w-3xl text-lg leading-8 text-lp-muted">{cleanReportText(normalized.oneLineIdea)}</p>
               <div className="mt-6 flex flex-wrap gap-2">
                 <Pill value={normalized.primaryUser || normalized.targetUserSegment} />
-                <Pill value={brief.evidenceScore?.verdict.replaceAll("_", " ") || brief.readinessLabel} />
+                <Pill value={formatVerdict(brief.evidenceScore?.verdict || brief.readinessLabel)} />
                 {building && <Pill value="Working" />}
               </div>
             </div>
@@ -416,11 +474,11 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
             </div>
             <div className="border-t border-white/15 pt-5">
               <p className="mono-label">Positioning</p>
-              <p className="mt-2 text-sm leading-6 text-white">{normalized.positioning}</p>
+              <p className="mt-2 text-sm leading-6 text-white">{cleanReportText(normalized.positioning)}</p>
             </div>
             <div className="border-t border-white/15 pt-5">
               <p className="mono-label">Next best action</p>
-              <p className="mt-2 text-sm leading-6 text-white">{normalized.nextBestAction}</p>
+              <p className="mt-2 text-sm leading-6 text-white">{cleanReportText(normalized.nextBestAction)}</p>
             </div>
           </div>
         </header>
@@ -444,7 +502,7 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
           ].map(([label, value]) => (
             <article key={label} className="terminal-card p-4">
               <p className="mono-label">{label}</p>
-              <p className="mt-2 text-xs leading-5 text-lp-muted">{value}</p>
+              <p className="mt-2 text-xs leading-5 text-lp-muted">{cleanReportText(value)}</p>
             </article>
           ))}
         </section>
@@ -494,7 +552,7 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
             ].map(([label, value]) => (
               <div key={label} className="border border-white/10 bg-white/[0.025] p-5">
                 <p className="mono-label">{label}</p>
-                <p className="mt-2 text-sm leading-6 text-white">{value}</p>
+                <p className="mt-2 text-sm leading-6 text-white">{cleanReportText(value)}</p>
               </div>
             ))}
           </div>
@@ -505,11 +563,11 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
         <Section eyebrow="Market reality" title="Competitors, alternatives, and the real gap">
           {brief.marketReality.noDirectCompetitorMessage && (
             <div className="mb-5 border border-amber-400/20 bg-amber-400/5 p-4 text-sm leading-6 text-amber-100/90">
-              {brief.marketReality.noDirectCompetitorMessage}
+              {cleanReportText(brief.marketReality.noDirectCompetitorMessage)}
             </div>
           )}
-          <p className="max-w-4xl text-sm leading-7 text-lp-muted">{brief.marketReality.summary}</p>
-          <p className="mt-4 text-sm leading-7 text-white"><span className="text-lp-muted">Positioning gap:</span> {brief.marketReality.positioningGap}</p>
+          <p className="max-w-4xl text-sm leading-7 text-lp-muted">{cleanReportText(brief.marketReality.summary)}</p>
+          <p className="mt-4 text-sm leading-7 text-white"><span className="text-lp-muted">Positioning gap:</span> {cleanReportText(brief.marketReality.positioningGap)}</p>
           <p className="mt-6 font-mono text-[10px] uppercase tracking-wider text-lp-subtle md:hidden">Swipe horizontally to compare alternatives →</p>
           <div className="mt-7 overflow-x-auto">
             <table className="w-full min-w-[920px] border-collapse text-left text-sm">
@@ -523,11 +581,11 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
               <tbody>
                 {(alternatives.length ? alternatives : [{ name: "No exact direct competitor verified", type: "Evidence gap", useCase: "Ask users what they use now.", strength: "Honest uncertainty.", gap: "Needs direct validation.", confidence: "Low" as const, sourceUrl: undefined }]).map((row) => (
                   <tr key={`${row.name}-${row.type}`}>
-                    <td className="border-b border-white/10 py-4 pr-5 font-medium text-white">{row.name}</td>
-                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{row.type}</td>
-                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{row.useCase}</td>
-                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{row.strength}</td>
-                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{row.gap}</td>
+                    <td className="border-b border-white/10 py-4 pr-5 font-medium text-white">{cleanReportText(row.name)}</td>
+                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{cleanReportText(row.type)}</td>
+                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{cleanReportText(row.useCase)}</td>
+                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{cleanReportText(row.strength)}</td>
+                    <td className="border-b border-white/10 py-4 pr-5 text-lp-muted">{cleanReportText(row.gap)}</td>
                     <td className="border-b border-white/10 py-4 pr-5"><Pill value={row.confidence} /></td>
                     <td className="border-b border-white/10 py-4 text-lp-muted">{row.sourceUrl ? <a className="hover:text-white" href={row.sourceUrl} target="_blank" rel="noreferrer">Open</a> : "Founder input"}</td>
                   </tr>
@@ -619,10 +677,10 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
 
           <Section eyebrow="Pitch assets" title="Evidence-safe messaging">
             <div className="space-y-5 text-sm leading-7">
-              <div><p className="mono-label">One-line pitch</p><p className="mt-2 text-white">{brief.pitchAssets.oneLinePitch}</p></div>
-              <div><p className="mono-label">30-second pitch</p><p className="mt-2 text-lp-muted">{brief.pitchAssets.elevatorPitch}</p></div>
-              <div><p className="mono-label">Landing headline</p><p className="mt-2 text-white">{brief.pitchAssets.landingHeadline}</p></div>
-              <div><p className="mono-label">User interview message</p><p className="mt-2 text-lp-muted">{brief.pitchAssets.interviewMessage}</p></div>
+              <div><p className="mono-label">One-line pitch</p><p className="mt-2 text-white">{cleanReportText(brief.pitchAssets.oneLinePitch)}</p></div>
+              <div><p className="mono-label">30-second pitch</p><p className="mt-2 text-lp-muted">{cleanReportText(brief.pitchAssets.elevatorPitch)}</p></div>
+              <div><p className="mono-label">Landing headline</p><p className="mt-2 text-white">{cleanReportText(brief.pitchAssets.landingHeadline)}</p></div>
+              <div><p className="mono-label">User interview message</p><p className="mt-2 text-lp-muted">{cleanReportText(brief.pitchAssets.interviewMessage)}</p></div>
               <div>
                 <p className="mono-label">6-slide outline</p>
                 <ol className="mt-2 space-y-1 text-lp-muted">{brief.pitchAssets.deckOutline.map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol>

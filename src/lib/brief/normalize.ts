@@ -86,6 +86,8 @@ const titleCase = (value: string) =>
 const sentence = (value: string) => {
   const cleaned = value
     .replace(/\s+/g, " ")
+    .replace(/\bhave interviewed a few people and they like to the idea\b/gi, "A few informal conversations suggest interest, but this still needs direct behavioral validation")
+    .replace(/\bthey use (?:a )?graphic designer but that(?: is|'s)? too slow\b/gi, "Some users currently rely on graphic designers, but revision speed may be slow")
     .replace(/\bim\b/gi, "I am")
     .replace(/\bi think\b/gi, "")
     .replace(/\bdeisgn\b/gi, "design")
@@ -94,7 +96,8 @@ const sentence = (value: string) => {
     .replace(/\s+([,.;:!?])/g, "$1")
     .trim();
   if (!cleaned) return "";
-  return cleaned.endsWith(".") ? cleaned : `${cleaned}.`;
+  const capitalized = `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}`;
+  return capitalized.endsWith(".") ? capitalized : `${capitalized}.`;
 };
 
 const shortSentence = (value: string, fallback: string) => {
@@ -259,7 +262,9 @@ export function normalizeFounderBrief(profile: FounderProfile, evidence?: Eviden
   ];
 
   const evidenceSummary = profile.traction && !/no proof yet|none|not sure/i.test(profile.traction)
-    ? sentence(profile.traction)
+    ? /interviewed.*(?:like|interest)|people.*(?:like|interest).*idea/i.test(profile.traction)
+      ? "A few informal conversations suggest interest, but this still needs direct behavioral validation."
+      : sentence(profile.traction)
     : "No direct user, usage, payment, or pilot evidence has been collected yet.";
 
   if (noIdea) {

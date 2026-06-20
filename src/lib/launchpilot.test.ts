@@ -42,6 +42,8 @@ describe("Agent engine", () => {
     expect(brief.agents.length).toBeGreaterThanOrEqual(5);
     expect(brief.workspace.some((item) => item.type === "Current Bottleneck")).toBe(true);
     expect(brief.sources.length).toBeGreaterThan(0);
+    expect(brief.pitchAssets.elevatorPitch).toContain("The first validation focus is to ");
+    expect(brief.pitchAssets.elevatorPitch).not.toMatch(/focus is validate/i);
   });
 
   it("creates one clear bottleneck", () => {

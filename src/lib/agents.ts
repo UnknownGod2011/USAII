@@ -5,6 +5,19 @@ import type { AgentOutput, FounderProfile, LaunchBrief, ReasoningCard, ResearchP
 
 const now = () => new Date().toISOString();
 
+const founderFacingVerdict = (value?: string) => ({
+  strong: "Strong — ready for a narrow pilot",
+  promising_needs_modification: "Promising — needs validation",
+  weak: "Weak — needs refinement",
+  reject: "Not ready — rethink direction",
+}[value || ""] || value?.replaceAll("_", " ") || "Validation required");
+
+const infinitiveFocus = (value: string) => {
+  const cleaned = value.trim().replace(/\.$/, "");
+  if (/^to\s+/i.test(cleaned)) return cleaned.toLowerCase();
+  return `to ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
+};
+
 export const LAUNCHPILOT_AGENT_NAMES = [
   "Market Reality Agent",
   "Assumption & Risk Agent",
@@ -108,7 +121,7 @@ function scoreFromProfile(profile: FounderProfile, evidence?: EvidenceScore) {
     executionDifficulty: Math.max(20, 100 - feasibility),
     founderFit,
     overall,
-    label: evidence?.verdict.replaceAll("_", " ") || "Validation required",
+    label: founderFacingVerdict(evidence?.verdict),
     notes: [
       "This is an evidence-readiness score, not a prediction of startup success.",
       evidence?.scoreCapReason || "Improve it with direct user behavior, not longer answers.",
@@ -338,7 +351,7 @@ export function generateLaunchBrief(profile: FounderProfile, research: ResearchP
   ];
   const pitchAssets = {
     oneLinePitch: normalized.oneLineIdea,
-    elevatorPitch: `${normalized.oneLineIdea} The first validation focus is ${normalized.researchFocus.toLowerCase()}`,
+    elevatorPitch: `${normalized.oneLineIdea} The first validation focus is ${infinitiveFocus(normalized.researchFocus)}.`,
     problemStatement: normalized.problemStatement,
     interviewMessage: `Hi, I am researching custom workflows for ${normalized.primaryUser.toLowerCase()}. Could I ask about your last relevant order or task, what tools you used, how long revisions took, and where the workflow slowed down? I am researching, not selling.`,
     landingHeadline: normalized.positioning,
@@ -366,7 +379,7 @@ export function generateLaunchBrief(profile: FounderProfile, research: ResearchP
     toWorkspace("Risks", "Risk register", risks.join("\n"), "High", "AI may be wrong"),
     toWorkspace("MVP Plan", "Smallest testable version", `${normalized.mvpPlan.goal}\n${normalized.mvpPlan.manualPilot}`, "High", "Framework-based"),
     toWorkspace("Current Bottleneck", evidence?.weakestSignal || "Direct user evidence", normalized.nextBestAction, "High", "Framework-based"),
-    toWorkspace("Founder Reality Check", evidence?.verdict.replaceAll("_", " ") || "Validation required", `${normalized.marketRealitySummary}\nVC outreach is premature until direct demand improves.`, "High", "Framework-based"),
+    toWorkspace("Founder Reality Check", founderFacingVerdict(evidence?.verdict), `${normalized.marketRealitySummary}\nVC outreach is premature until direct demand improves.`, "High", "Framework-based"),
     toWorkspace("Roadmap", "Bottleneck-first roadmap", roadmap.map((phase) => `${phase.horizon}: ${phase.actions.join(" ")}`).join("\n"), "High", "Framework-based"),
     toWorkspace("Pitch Assets", "Evidence-safe messaging", `${pitchAssets.oneLinePitch}\n\n${pitchAssets.elevatorPitch}\n\n${pitchAssets.interviewMessage}`, "Medium", "Inferred"),
     toWorkspace("Opportunity Cards", "Programs and communities", normalized.opportunities.map((item) => `${item.name}: ${item.nextAction}`).join("\n"), "Medium", "Needs validation"),
