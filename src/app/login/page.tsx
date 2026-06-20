@@ -25,7 +25,7 @@ export default function LoginPage() {
       return "Firebase sign-in could not reach the authentication service. Check your connection and try again.";
     }
     if (message.includes("auth/unauthorized-domain")) {
-      return "This domain is not authorized for Firebase sign-in yet.";
+      return "This deployment domain is not authorized in Firebase. Add this exact domain in Firebase Authentication → Settings → Authorized domains.";
     }
     if (message.includes("auth/popup-closed-by-user")) {
       return "The sign-in window was closed before LaunchPilot could finish authentication.";
