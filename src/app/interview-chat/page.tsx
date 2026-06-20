@@ -17,67 +17,87 @@ import Link from "next/link";
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { playClickSound } from "@/lib/sounds/click";
-import { mergeWithInterviewPrefill } from "@/lib/users/prefill";
 
 type ChatMessage = { role: "assistant" | "user"; content: string; status?: string };
+const firstQuestion = "What should LaunchPilot call you?";
+
+function intakeToCollectedFields(intake: Record<string, unknown>): CollectedFields {
+  const city = typeof intake.locationCity === "string" ? intake.locationCity : "";
+  const country = typeof intake.locationCountry === "string" ? intake.locationCountry : "";
+  const text = (key: string) => typeof intake[key] === "string" ? intake[key] as string : undefined;
+  return {
+    name: text("name"),
+    location: [city, country].filter(Boolean).join(", ") || undefined,
+    rawIdea: text("rawIdea"),
+    targetUser: text("targetUser"),
+    problem: text("problem"),
+    status: text("status"),
+    hoursPerWeek: typeof intake.hoursPerWeek === "number" ? String(intake.hoursPerWeek) : text("hoursPerWeek"),
+    budget: text("budget"),
+    skills: Array.isArray(intake.skills) ? intake.skills.filter((item): item is string => typeof item === "string").join(", ") : text("skills"),
+    teamStatus: text("teamStatus"),
+    stage: text("stage"),
+    evidenceLevel: text("evidenceLevel"),
+    alternatives: text("alternatives"),
+    thirtyDayGoal: text("thirtyDayGoal"),
+    openToModification: typeof intake.openToModification === "boolean"
+      ? intake.openToModification ? "Yes" : "No"
+      : text("openToModification"),
+  };
+}
 
 function InterviewChatPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = searchParams.get("projectId") ?? undefined;
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [conversation, setConversation] = useState<Array<{ role: "assistant" | "user"; content: string }>>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: firstQuestion }]);
+  const [conversation, setConversation] = useState<Array<{ role: "assistant" | "user"; content: string }>>([{ role: "assistant", content: firstQuestion }]);
   const [collectedFields, setCollectedFields] = useState<CollectedFields>({});
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [loadingSavedContext, setLoadingSavedContext] = useState(Boolean(projectId));
+  const [startupNotice, setStartupNotice] = useState("");
   const [interviewComplete, setInterviewComplete] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
 
   const bootstrapRef = useRef(false);
   const interviewCompleteRef = useRef(false);
+  const userStartedRef = useRef(false);
 
   useEffect(() => {
     if (bootstrapRef.current) return;
     bootstrapRef.current = true;
 
     async function bootstrap() {
+      if (!projectId) {
+        setLoadingSavedContext(false);
+        return;
+      }
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 2_500);
       try {
-        if (projectId) {
-          const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { credentials: "include" });
-          if (response.ok) {
-            const data = await response.json() as { intake?: Partial<CollectedFields> };
-            if (data.intake) {
-              const prefilled = await mergeWithInterviewPrefill(data.intake);
-              const turn = await requestInterviewTurn([], { collectedFields: prefilled });
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (response.ok && !userStartedRef.current) {
+          const data = await response.json() as { intake?: Record<string, unknown> };
+          if (data.intake) {
+            const prefilled = intakeToCollectedFields(data.intake);
+            const turn = await requestInterviewTurn([], { collectedFields: prefilled });
+            if (!userStartedRef.current) {
               playClickSound();
               setMessages([{ role: "assistant", content: turn.message }]);
               setConversation([{ role: "assistant", content: turn.message }]);
               setCollectedFields(prefilled);
-              return;
             }
-          } else if (response.status !== 404) {
-            throw new Error("Could not load this project from the workspace.");
           }
         }
-
-        const turn = await requestInterviewTurn([]);
-        playClickSound();
-        setMessages([{ role: "assistant", content: turn.message }]);
-        setConversation([{ role: "assistant", content: turn.message }]);
-        setCollectedFields(await mergeWithInterviewPrefill(turn.collectedFields));
-      } catch (error) {
-        setMessages([
-          {
-            role: "assistant",
-            content:
-              error instanceof Error
-                ? `I couldn't start the interview: ${error.message}`
-                : "I couldn't start the interview. Please refresh and try again.",
-          },
-        ]);
+      } catch {
+        if (!userStartedRef.current) setStartupNotice("Saved context is unavailable, so the interview started without prefill.");
       } finally {
-        setIsBootstrapping(false);
+        window.clearTimeout(timer);
+        setLoadingSavedContext(false);
       }
     }
 
@@ -85,9 +105,10 @@ function InterviewChatPageInner() {
   }, [projectId]);
 
   const handleSubmit = async () => {
-    if (!input.trim() || isProcessing || isBootstrapping) return;
+    if (!input.trim() || isProcessing) return;
 
     const answer = input.trim();
+    userStartedRef.current = true;
     setInput("");
     setIsProcessing(true);
 
@@ -193,13 +214,14 @@ function InterviewChatPageInner() {
               <ChatTranscriptPanel
                 messages={messages}
                 subtitle={
-                  isBootstrapping
-                    ? "Starting interview…"
+                  loadingSavedContext
+                    ? "You can answer now while saved context loads."
                     : isProcessing
                       ? "LaunchPilot is thinking…"
                       : "Transcript updates as you type."
                 }
               />
+              {startupNotice && <p className="mt-3 text-xs text-lp-muted">{startupNotice}</p>}
 
               <div className="mt-4 flex gap-2">
                 <input
@@ -208,13 +230,13 @@ function InterviewChatPageInner() {
                   onChange={(e) => setInput(e.target.value)}
                   placeholder="Type your answer..."
                   onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                  disabled={isProcessing || isBootstrapping}
+                  disabled={isProcessing}
                 />
                 <button
                   type="button"
                   className="btn-primary shrink-0 px-5"
                   onClick={handleSubmit}
-                  disabled={isProcessing || isBootstrapping}
+                  disabled={isProcessing}
                 >
                   Send <ArrowRight className="h-4 w-4" />
                 </button>

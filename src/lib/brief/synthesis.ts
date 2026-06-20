@@ -13,6 +13,28 @@ const PolishedBriefSchema = z.object({
   whyThisIsSharper: z.string().min(30).max(700),
   marketRealitySummary: z.string().min(30).max(900),
   nextBestAction: z.string().min(20).max(600),
+  riskRegister: z.array(z.object({
+    assumption: z.string().min(15).max(360),
+    whyItMatters: z.string().min(15).max(360),
+    riskLevel: z.enum(["Low", "Medium", "High"]),
+    test: z.string().min(15).max(500),
+    successSignal: z.string().min(15).max(400),
+    stopOrPivotTrigger: z.string().min(15).max(400),
+  })).min(1).max(4).optional(),
+  mvpPlan: z.object({
+    goal: z.string().min(20).max(420),
+    manualPilot: z.string().min(20).max(700),
+    mustHave: z.array(z.string().min(3).max(180)).min(2).max(6),
+    doNotBuildYet: z.array(z.string().min(3).max(180)).min(2).max(8),
+    successMetric: z.string().min(15).max(400),
+  }).optional(),
+  roadmapPlan: z.object({
+    next24Hours: z.array(z.string().min(10).max(300)).min(1).max(4),
+    sevenDaySprint: z.array(z.string().min(10).max(300)).min(1).max(5),
+    thirtyDayPilot: z.array(z.string().min(10).max(300)).min(1).max(5),
+    sixtyNinetyDays: z.array(z.string().min(10).max(300)).min(1).max(5),
+    stopPivotCriteria: z.string().min(15).max(500),
+  }).optional(),
   pitchAssets: z.object({
     oneLinePitch: z.string().min(20).max(260),
     thirtySecondPitch: z.string().min(40).max(900),
@@ -24,7 +46,7 @@ const PolishedBriefSchema = z.object({
 
 type PolishedBrief = z.infer<typeof PolishedBriefSchema>;
 
-const timeoutMs = 12_000;
+const timeoutMs = 18_000;
 
 function timeoutSignal() {
   const controller = new AbortController();
@@ -58,8 +80,17 @@ function contextForPrompt(base: LaunchBrief) {
       url: source.url,
       type: source.type,
       label: source.label,
+      snippet: source.snippet?.slice(0, 280),
+      verified: source.verified,
       limitation: source.limitation,
     })),
+    evidenceClaims: base.research.evidenceClaims.slice(0, 12).map((claim) => ({
+      claim: claim.claim,
+      category: claim.category,
+      confidence: claim.confidence,
+      limitation: claim.limitation,
+    })),
+    marketSignals: base.research.marketSignals,
     marketReality: base.marketReality,
     riskRegister: base.riskRegister,
     mvpPlan: base.mvpPlan,
@@ -72,8 +103,12 @@ function prompt(base: LaunchBrief) {
     "You are LaunchPilot's synthesis layer. Rewrite the saved founder research into polished founder-facing report language.",
     "Do not judge startup success. Do not invent sources, traction, revenue, market size, eligibility, testimonials, or competitors.",
     "Use only the provided facts. If direct competitors are not verified, say that clearly and treat adjacent tools/services as alternatives.",
+    "Make every section decision-oriented: distinguish source-backed market context from direct demand evidence, identify the most important evidence gap, and give a concrete next action.",
+    "The market reality summary must explain what the sources support, what they do not prove, and the narrow opportunity to test.",
+    "Risks must be falsifiable. MVP scope must test one outcome. The roadmap must move from the next 24 hours to a 7-day validation sprint, a 30-day pilot, and only then a 60/90-day automation path.",
+    "Include explicit do-not-build-yet boundaries when evidence is weak. Keep language concise, specific, and suitable for a student founder.",
     "Return only valid JSON matching this TypeScript shape:",
-    "{ executiveSummary, oneLineIdea, targetUser, problemStatement, validatedDirection, whyThisIsSharper, marketRealitySummary, nextBestAction, pitchAssets: { oneLinePitch, thirtySecondPitch, landingHeadline, userInterviewMessage, slideOutline } }",
+    "{ executiveSummary, oneLineIdea, targetUser, problemStatement, validatedDirection, whyThisIsSharper, marketRealitySummary, nextBestAction, riskRegister?, mvpPlan?, roadmapPlan?, pitchAssets: { oneLinePitch, thirtySecondPitch, landingHeadline, userInterviewMessage, slideOutline } }",
     "Context:",
     JSON.stringify(contextForPrompt(base)),
   ].join("\n\n");
@@ -90,7 +125,7 @@ async function callGemini(base: LaunchBrief): Promise<PolishedBrief> {
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt(base) }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 1600, responseMimeType: "application/json" },
+          generationConfig: { temperature: 0.15, maxOutputTokens: 2800, responseMimeType: "application/json" },
         }),
       });
       if (!response.ok) throw providerErrorFromResponse("gemini", response);
@@ -100,7 +135,7 @@ async function callGemini(base: LaunchBrief): Promise<PolishedBrief> {
     } finally {
       cancel();
     }
-  }, { maxAttempts: 1 });
+  });
 }
 
 async function callOpenAICompatible(base: LaunchBrief, apiKey: string, url: string, model: string) {
@@ -168,6 +203,17 @@ function mergePolish(base: LaunchBrief, polished: PolishedBrief | null): LaunchB
     whyThisIsSharper: polished.whyThisIsSharper,
     nextValidationTask: polished.nextBestAction,
     marketReality: { ...base.marketReality, summary: polished.marketRealitySummary },
+    riskRegister: polished.riskRegister || base.riskRegister,
+    risks: (polished.riskRegister || base.riskRegister).map((risk) => `${risk.riskLevel}: ${risk.assumption}. Test: ${risk.test}`),
+    mvpPlan: polished.mvpPlan || base.mvpPlan,
+    mvpScope: (polished.mvpPlan || base.mvpPlan).mustHave,
+    roadmapPlan: polished.roadmapPlan || base.roadmapPlan,
+    roadmap: [
+      { horizon: "Next 24 hours", actions: (polished.roadmapPlan || base.roadmapPlan).next24Hours },
+      { horizon: "7-day sprint", actions: (polished.roadmapPlan || base.roadmapPlan).sevenDaySprint },
+      { horizon: "30-day pilot", actions: (polished.roadmapPlan || base.roadmapPlan).thirtyDayPilot },
+      { horizon: "60/90-day direction", actions: (polished.roadmapPlan || base.roadmapPlan).sixtyNinetyDays },
+    ],
     pitchAssets: {
       ...base.pitchAssets,
       oneLinePitch: polished.pitchAssets.oneLinePitch,

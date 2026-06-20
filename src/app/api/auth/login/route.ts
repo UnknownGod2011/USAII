@@ -2,8 +2,8 @@ import { createSessionToken, getOrCreateUser, getOrCreateUserWithId, SESSION_COO
 import { NextResponse } from "next/server";
 import { z } from "zod";
 const LoginSchema = z.object({
-  name: z.string().trim().max(80).optional(),
-  email: z.string().trim().email().optional(),
+  name: z.string().trim().max(80).nullable().optional(),
+  email: z.string().trim().email().nullable().optional(),
   idToken: z.string().min(20).optional(),
 });
 
@@ -34,7 +34,9 @@ export async function POST(request: Request) {
     if (!firebaseUser && (!parsed.data.email || !demoLoginAllowed)) {
       return NextResponse.json({ error: "Use Firebase sign-in to continue." }, { status: 401 });
     }
-    const user = firebaseUser ? await getOrCreateUserWithId(firebaseUser) : await getOrCreateUser(parsed.data.name, parsed.data.email);
+    const user = firebaseUser
+      ? await getOrCreateUserWithId(firebaseUser)
+      : await getOrCreateUser(parsed.data.name || undefined, parsed.data.email || undefined);
     const response = NextResponse.json({ user: { id: user.id, name: user.name, email: user.email, avatarUrl: firebaseUser?.avatarUrl } });
     response.cookies.set(SESSION_COOKIE, createSessionToken(user.id, user), { httpOnly: true, sameSite: "lax", secure: new URL(request.url).protocol === "https:", path: "/", maxAge: 604_800 });
     return response;

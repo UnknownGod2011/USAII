@@ -10,5 +10,7 @@ describe("LaunchBriefView", () => {
     expect(screen.getByText("Launch Brief Workspace")).toBeTruthy();
     expect(screen.getAllByText("Context Copilot")).toHaveLength(2);
     expect(screen.getAllByText("Founder Reality Check").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("What evidence gap matters most?")).toHaveLength(2);
+    expect(screen.queryByText("What is an amethyst?")).toBeNull();
   });
 });

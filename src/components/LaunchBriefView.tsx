@@ -185,7 +185,7 @@ function CopilotPanel({
       <div className="flex items-center gap-2"><MessageCircle className="h-4 w-4" /><h2 className="font-semibold">Context Copilot</h2></div>
       <p className="mt-3 text-sm leading-6 text-lp-muted">Answers use the persisted Launch Brief, founder constraints, evidence verdict, risks, roadmap, agent outputs, and source ledger.</p>
       <div className="mt-4 grid gap-2">
-        {["What should I do today?", "What competitors did you find?", "Should I find investors?", "Should I drop out?", "What is an amethyst?"].map((prompt) => (
+        {["What should I do today?", "What evidence gap matters most?", "Which competitors are most relevant?", "What should I validate this week?", "What is the biggest risk in this idea?"].map((prompt) => (
           <button key={prompt} onClick={() => onAsk(prompt)} className="border border-white/10 px-3 py-2 text-left text-[11px] text-lp-muted hover:border-white/30 hover:text-white">{prompt}</button>
         ))}
       </div>
@@ -360,8 +360,12 @@ export function LaunchBriefView({ brief, startupIdeaId, activeAgent, building }:
         body: JSON.stringify({ question: actualQuestion, startupIdeaId }),
       });
       const data = await response.json();
-      setAnswer(data.answer || data.error || "Copilot could not answer from the workspace.");
+      if (!response.ok || !data.answer) throw new Error(data.error || "Copilot request failed");
+      setAnswer(data.answer);
       setReferences(Array.isArray(data.references) ? data.references.filter((reference: { url?: string }) => reference.url) : []);
+    } catch {
+      setAnswer("Copilot could not answer right now. Please try again.");
+      setReferences([]);
     } finally {
       setAsking(false);
     }

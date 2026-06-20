@@ -70,7 +70,8 @@ export default function LoginPage() {
     async function checkExistingAppSession() {
       try {
         const response = await fetch("/api/auth/session", { credentials: "include" });
-        if (!cancelled && response.ok) router.replace("/projects");
+        const data = await response.json().catch(() => ({}));
+        if (!cancelled && response.ok && data.authenticated) router.replace("/projects");
       } catch {
         // Firebase auth-state below can still restore the app session.
       }
