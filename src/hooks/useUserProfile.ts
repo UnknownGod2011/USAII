@@ -53,7 +53,7 @@ export function useUserProfile() {
     ready,
     refresh,
     displayName,
-    avatarUrl: profile?.avatarUrl ?? null,
+    avatarUrl: profile?.avatarUrl || user?.avatarUrl || null,
     email,
   };
 }

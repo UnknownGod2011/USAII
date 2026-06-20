@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { EditProfileModal } from "@/components/profile/EditProfileModal";
 import { UserAvatar } from "@/components/profile/UserAvatar";
 import { clearStoredUser } from "@/lib/auth-session";
+import { firebaseAuth } from "@/lib/firebase";
 import { useUserProfile } from "@/hooks/useUserProfile";
+import { signOut } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 
 export function NavUserMenu() {
@@ -31,6 +33,7 @@ export function NavUserMenu() {
   async function handleSignOut() {
     setOpen(false);
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    await signOut(firebaseAuth).catch(() => undefined);
     clearStoredUser();
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/login");

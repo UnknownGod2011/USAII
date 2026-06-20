@@ -1,4 +1,5 @@
 import { requireSessionUser } from "@/lib/auth";
+import { loadUserState, newId, nowIso, productionBlobStateEnabled, saveUserState } from "@/lib/blobState";
 import { answerCopilotQuestion } from "@/lib/copilot";
 import { getDb } from "@/lib/db";
 import { isIrrelevantFounderQuestion, redirectMessage } from "@/lib/guardrails";
@@ -25,6 +26,23 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const { question = "", startupIdeaId } = await request.json();
     if (isIrrelevantFounderQuestion(question)) return NextResponse.json({ answer: redirectMessage, references: [] });
+    if (productionBlobStateEnabled()) {
+      const state = await loadUserState(user);
+      const idea = state.ideas
+        .filter((item) => item.userId === user.id && ["approved", "approved_building"].includes(item.status) && (!startupIdeaId || item.id === startupIdeaId))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+      const saved = idea && state.workspaceItems.find((item) => item.startupIdeaId === idea.id && item.type === "Launch Brief" && !item.stale);
+      if (!idea || !saved) return NextResponse.json({ answer: "Finish and approve an evidence-reviewed direction first.", references: [] }, { status: 409 });
+      const brief = (JSON.parse(saved.contentJson) as { brief: LaunchBrief }).brief;
+      const { answer, mode } = await answerCopilotQuestion(question, brief);
+      const now = nowIso();
+      state.chatMessages.push(
+        { id: newId("chat"), userId: user.id, startupIdeaId: idea.id, role: "user", content: question, metadataJson: "{}", createdAt: now },
+        { id: newId("chat"), userId: user.id, startupIdeaId: idea.id, role: "assistant", content: answer, metadataJson: JSON.stringify({ contextual: true, mode }), createdAt: now },
+      );
+      await saveUserState(state);
+      return NextResponse.json({ answer, references: relevantReferences(question, brief) });
+    }
     const idea = await getDb().startupIdea.findFirst({ where: { userId: user.id, status: { in: ["approved", "approved_building"] }, ...(startupIdeaId ? { id: startupIdeaId } : {}) }, orderBy: { updatedAt: "desc" }, include: { workspaceItems: { where: { stale: false } } } });
     const saved = idea?.workspaceItems.find((item) => item.type === "Launch Brief");
     if (!idea || !saved) return NextResponse.json({ answer: "Finish and approve an evidence-reviewed direction first.", references: [] }, { status: 409 });

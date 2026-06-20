@@ -1,4 +1,5 @@
 import { requireSessionUser } from "@/lib/auth";
+import { loadUserState, newId, nowIso, productionBlobStateEnabled, saveUserState } from "@/lib/blobState";
 import { getDb } from "@/lib/db";
 import { FounderIntakeSchema } from "@/lib/intake/schema";
 import { NextResponse } from "next/server";
@@ -8,6 +9,28 @@ export async function POST(request: Request) {
     const parsed = FounderIntakeSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "Some founder answers are incomplete.", details: parsed.error.flatten() }, { status: 400 });
     const intake = parsed.data;
+    if (productionBlobStateEnabled()) {
+      const state = await loadUserState(user);
+      const now = nowIso();
+      const intakeId = newId("intake");
+      const startupIdeaId = newId("idea");
+      state.intakes.push({ id: intakeId, userId: user.id, data: intake, createdAt: now, updatedAt: now });
+      state.ideas.push({
+        id: startupIdeaId,
+        userId: user.id,
+        intakeId,
+        name: "Working direction",
+        originalIdea: intake.rawIdea,
+        finalizedIdea: intake.rawIdea,
+        targetUser: intake.targetUser,
+        problemStatement: intake.problem,
+        status: "researching",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await saveUserState(state);
+      return NextResponse.json({ intakeId, startupIdeaId });
+    }
     const created = await getDb().founderIntake.create({
       data: {
         userId: user.id, name: intake.name, locationCountry: intake.locationCountry, locationCity: intake.locationCity, status: intake.status,

@@ -1,4 +1,5 @@
 import { requireSessionUser } from "@/lib/auth";
+import { loadUserState, newId, nowIso, productionBlobStateEnabled, saveUserState } from "@/lib/blobState";
 import { getDb } from "@/lib/db";
 import { FounderIntakeSchema, type ResearchSource } from "@/lib/intake/schema";
 import { founderProfileFromIntake } from "@/lib/intake/profileAdapter";
@@ -54,6 +55,58 @@ export async function POST(request: Request) {
       relevanceScore: source.relevanceScore || 0, qualityScore: source.qualityScore || 0,
     }));
     const evidence = calculateEvidenceScore(intake, sources, pack.mode, pack.evidenceClaims);
+    if (productionBlobStateEnabled()) {
+      const state = await loadUserState(user);
+      const idea = state.ideas.find((item) => item.id === body.startupIdeaId && item.userId === user.id);
+      if (!idea) return NextResponse.json({ error: "Saved startup direction not found." }, { status: 404 });
+      const now = nowIso();
+      const researchRunId = newId("research");
+      const storedSources = sources.map((source) => ({
+        id: newId("source"),
+        researchRunId,
+        title: source.title,
+        url: source.url,
+        snippet: source.snippet,
+        sourceType: source.sourceType,
+        supports: source.supports,
+        limitation: source.limitation,
+        confidence: source.confidence,
+        provider: source.provider,
+        query: source.query,
+        verified: source.verified,
+        relevanceScore: source.relevanceScore,
+        qualityScore: source.qualityScore,
+        createdAt: now,
+      }));
+      state.researchRuns.push({
+        id: researchRunId,
+        userId: user.id,
+        startupIdeaId: idea.id,
+        status: "complete",
+        evidenceScore: evidence.score,
+        verdict: evidence.verdict,
+        strongestSignal: evidence.strongestSignal,
+        weakestSignal: evidence.weakestSignal,
+        reasoning: evidence.reasoning,
+        whatCouldBeWrong: evidence.whatCouldBeWrong,
+        nextValidationStep: evidence.nextValidationStep,
+        fallbackUsed: evidence.researchMode === "fallback",
+        breakdownJson: JSON.stringify(evidence.breakdown),
+        intakeJson: JSON.stringify(intake),
+        researchPlanJson: JSON.stringify(pack.plan),
+        evidenceClaimsJson: JSON.stringify(pack.evidenceClaims),
+        logsJson: JSON.stringify(pack.logs),
+        packJson: JSON.stringify(pack),
+        scoreJson: JSON.stringify(evidence),
+        sources: storedSources,
+        createdAt: now,
+        updatedAt: now,
+      });
+      idea.status = evidence.verdict === "strong" ? "researched" : "needs_revision";
+      idea.updatedAt = now;
+      await saveUserState(state);
+      return NextResponse.json({ evidence, revisions: generateImprovedIdeas(intake, evidence), logs: pack.logs, researchRunId });
+    }
     const idea = await getDb().startupIdea.findFirst({ where: { id: body.startupIdeaId, userId: user.id } });
     if (!idea) return NextResponse.json({ error: "Saved startup direction not found." }, { status: 404 });
     const researchRun = await getDb().researchRun.create({

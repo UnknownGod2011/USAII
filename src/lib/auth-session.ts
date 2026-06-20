@@ -1,6 +1,8 @@
 export type DemoUser = {
+  id?: string;
   email?: string;
   name?: string;
+  avatarUrl?: string | null;
   mode?: string;
 };
 

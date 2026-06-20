@@ -6,6 +6,8 @@ import {
   clearStoredUser,
   getStoredUser,
 } from "@/lib/auth-session";
+import { firebaseAuth } from "@/lib/firebase";
+import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -43,6 +45,7 @@ export default function SettingsPage() {
 
   async function handleSignOut() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    await signOut(firebaseAuth).catch(() => undefined);
     clearStoredUser();
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/login");
@@ -55,6 +58,7 @@ export default function SettingsPage() {
     try {
       const response = await fetch("/api/account/data", { method: "DELETE" });
       if (!response.ok) throw new Error("Could not delete account data.");
+      await signOut(firebaseAuth).catch(() => undefined);
       clearLaunchPilotLocalData();
       window.dispatchEvent(new Event("launchpilot-auth-change"));
       setConfirmDelete(false);

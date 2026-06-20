@@ -75,6 +75,9 @@ export function Nav() {
           <Link className="px-3 py-2 hover:text-white" href="/dashboard">
             Workspace
           </Link>
+          <Link className="px-3 py-2 hover:text-white" href="/projects">
+            Projects
+          </Link>
           <Link className="px-3 py-2 hover:text-white" href="/profile">
             Profile
           </Link>

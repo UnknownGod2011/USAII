@@ -3,7 +3,9 @@
 import { Nav } from "@/components/Nav";
 import { UserAvatar } from "@/components/profile/UserAvatar";
 import { clearStoredUser } from "@/lib/auth-session";
+import { firebaseAuth } from "@/lib/firebase";
 import type { NormalizedFounderBrief } from "@/lib/brief/normalize";
+import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -83,6 +85,7 @@ export default function ProfilePage() {
 
   async function handleSignOut() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    await signOut(firebaseAuth).catch(() => undefined);
     clearStoredUser();
     window.dispatchEvent(new Event("launchpilot-auth-change"));
     router.push("/login");

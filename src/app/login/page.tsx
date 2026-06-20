@@ -2,6 +2,13 @@
 
 import { DotFieldBackground } from "@/components/animations/DotFieldBackground";
 import { Logo } from "@/components/Logo";
+import { firebaseAuth } from "@/lib/firebase";
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -12,29 +19,79 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function continueToWorkspace() {
-    setError("");
-    setLoading(true);
-    const safeEmail = email.trim();
-    if (!safeEmail) {
-      setError("Enter your email address.");
-      setLoading(false);
-      return;
+  function authErrorMessage(reason: unknown, fallback: string) {
+    const message = reason instanceof Error ? reason.message : "";
+    if (message.includes("auth/network-request-failed")) {
+      return "Firebase sign-in could not reach the authentication service. Check your connection and try again.";
     }
+    if (message.includes("auth/unauthorized-domain")) {
+      return "This domain is not authorized for Firebase sign-in yet.";
+    }
+    if (message.includes("auth/popup-closed-by-user")) {
+      return "The sign-in window was closed before LaunchPilot could finish authentication.";
+    }
+    if (message.includes("auth/operation-not-allowed")) {
+      return "This sign-in method is not enabled for this Firebase project yet.";
+    }
+    if (message.includes("auth/invalid-credential") || message.includes("auth/wrong-password")) {
+      return "Those email credentials were not accepted. Check the email and password, or use Google sign-in.";
+    }
+    return message || fallback;
+  }
+
+  async function startServerSession(idToken: string, fallback?: { email?: string | null; name?: string | null }) {
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: safeEmail, name: safeEmail.split("@")[0] }),
+      body: JSON.stringify({ idToken, email: fallback?.email, name: fallback?.name }),
     });
     const data = await response.json();
-    if (!response.ok) {
-      setError(data.error || "Could not start your session.");
+    if (!response.ok) throw new Error(data.error || "Could not start your session.");
+    localStorage.setItem("launchpilot-user", JSON.stringify(data.user));
+    window.dispatchEvent(new Event("launchpilot-auth-change"));
+    const next = new URLSearchParams(window.location.search).get("next");
+    router.push(next || "/projects");
+  }
+
+  async function continueWithGoogle() {
+    setError("");
+    setLoading(true);
+    try {
+      const credential = await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
+      await startServerSession(await credential.user.getIdToken(), {
+        email: credential.user.email,
+        name: credential.user.displayName,
+      });
+    } catch (reason) {
+      setError(authErrorMessage(reason, "Google sign-in failed."));
+      setLoading(false);
+    }
+  }
+
+  async function continueWithEmail() {
+    setError("");
+    setLoading(true);
+    const safeEmail = email.trim();
+    if (!safeEmail || password.length < 6) {
+      setError("Enter your email and a password with at least 6 characters.");
       setLoading(false);
       return;
     }
-    localStorage.setItem("launchpilot-user", JSON.stringify(data.user));
-    window.dispatchEvent(new Event("launchpilot-auth-change"));
-    router.push("/start");
+    try {
+      let credential;
+      try {
+        credential = await signInWithEmailAndPassword(firebaseAuth, safeEmail, password);
+      } catch {
+        credential = await createUserWithEmailAndPassword(firebaseAuth, safeEmail, password);
+      }
+      await startServerSession(await credential.user.getIdToken(), {
+        email: credential.user.email,
+        name: credential.user.displayName || safeEmail.split("@")[0],
+      });
+    } catch (reason) {
+      setError(authErrorMessage(reason, "Email sign-in failed."));
+      setLoading(false);
+    }
   }
 
   return (
@@ -47,11 +104,24 @@ export default function LoginPage() {
           <span className="font-mono text-sm tracking-wide">LaunchPilot AI</span>
         </div>
 
-        <div className="w-full max-w-sm border border-white/15 bg-black/80 p-8">
-          <p className="mono-label">Sign in</p>
+        <div className="w-full max-w-sm border border-white/15 bg-black/80 p-8 shadow-2xl shadow-black/40">
+          <p className="mono-label">Secure founder access</p>
           <h1 className="mt-3 text-2xl font-semibold text-white">Continue to your workspace</h1>
+          <p className="mt-3 text-sm leading-6 text-lp-muted">
+            Sign in with Google, or use email and password. Your founder ideas stay scoped to your account.
+          </p>
 
-          <div className="mt-8 space-y-4">
+          <button className="btn-primary mt-8 w-full justify-center" onClick={continueWithGoogle} disabled={loading}>
+            {loading ? "Starting secure session..." : "Continue with Google"}
+          </button>
+
+          <div className="my-6 flex items-center gap-3">
+            <span className="h-px flex-1 bg-white/10" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-lp-subtle">or email</span>
+            <span className="h-px flex-1 bg-white/10" />
+          </div>
+
+          <div className="space-y-4">
             <div>
               <label htmlFor="email" className="mono-label mb-2 block">
                 Email
@@ -62,7 +132,7 @@ export default function LoginPage() {
                 className="input-field"
                 placeholder="you@university.edu"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(event) => setEmail(event.target.value)}
               />
             </div>
             <div>
@@ -73,20 +143,21 @@ export default function LoginPage() {
                 id="password"
                 type="password"
                 className="input-field"
-                placeholder="••••••••"
+                placeholder="At least 6 characters"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
               />
             </div>
           </div>
 
-          {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
-          <button className="btn-primary mt-8 w-full" onClick={continueToWorkspace} disabled={loading}>
-            {loading ? "Starting secure session…" : "Continue"}
+          {error && <p className="mt-4 text-sm leading-6 text-red-400">{error}</p>}
+
+          <button className="btn-secondary mt-8 w-full justify-center" onClick={continueWithEmail} disabled={loading}>
+            {loading ? "Starting secure session..." : "Continue with email"}
           </button>
 
           <p className="mt-6 text-center font-mono text-xs text-lp-subtle">
-            Your founder context is stored in your signed local workspace.
+            LaunchPilot uses Firebase authentication and a signed server session.
           </p>
         </div>
       </div>

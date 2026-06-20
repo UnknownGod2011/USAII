@@ -34,6 +34,8 @@ yarn-error.log*
 .codex-*.stderr.log
 /.playwright-cli/
 /output/playwright/
+/.agents/
+/skills-lock.json
 
 # env files (can opt-in for committing if needed)
 .env*
