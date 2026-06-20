@@ -135,7 +135,11 @@ function emptyState(user: StoredUser): UserState {
 }
 
 async function readJsonFromBlob<T>(pathname: string): Promise<T | null> {
-  const blob = await get(pathname, { access: "private", token: process.env.BLOB_READ_WRITE_TOKEN });
+  const blob = await get(pathname, {
+    access: "private",
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+    useCache: false,
+  });
   if (!blob?.stream) return null;
   const text = await new Response(blob.stream).text();
   return JSON.parse(text) as T;
