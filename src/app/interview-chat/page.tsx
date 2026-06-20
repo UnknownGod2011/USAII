@@ -16,7 +16,6 @@ import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getProject } from "@/lib/projects/firestore";
 import { playClickSound } from "@/lib/sounds/click";
 import { mergeWithInterviewPrefill } from "@/lib/users/prefill";
 
@@ -45,12 +44,20 @@ function InterviewChatPageInner() {
     async function bootstrap() {
       try {
         if (projectId) {
-          const project = await getProject(projectId);
-          if (project && project.transcript.length > 0) {
-            setMessages(project.transcript.map((entry) => ({ role: entry.role, content: entry.content })));
-            setConversation(project.transcript);
-            setCollectedFields(project.collectedFields);
-            return;
+          const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { credentials: "include" });
+          if (response.ok) {
+            const data = await response.json() as { intake?: Partial<CollectedFields> };
+            if (data.intake) {
+              const prefilled = await mergeWithInterviewPrefill(data.intake);
+              const turn = await requestInterviewTurn([], { collectedFields: prefilled });
+              playClickSound();
+              setMessages([{ role: "assistant", content: turn.message }]);
+              setConversation([{ role: "assistant", content: turn.message }]);
+              setCollectedFields(prefilled);
+              return;
+            }
+          } else if (response.status !== 404) {
+            throw new Error("Could not load this project from the workspace.");
           }
         }
 

@@ -7,7 +7,12 @@ export async function loadInterviewPrefill(): Promise<CollectedFields> {
   const userId = getCurrentUserId();
   if (!userId) return {};
 
-  const profile = await getUserProfile(userId);
+  let profile = null;
+  try {
+    profile = await getUserProfile(userId);
+  } catch {
+    return {};
+  }
   if (!profile) return {};
 
   return profileToInterviewFields(profile) as CollectedFields;
