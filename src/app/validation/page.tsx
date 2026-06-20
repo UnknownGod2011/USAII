@@ -49,11 +49,45 @@ function ValidationContent() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const saved = localStorage.getItem("launchpilot-intake");
-      if (!saved || !ideaId) { setError("Your saved interview could not be found. Please complete the interview again."); setLoading(false); return; }
-      const parsed = JSON.parse(saved) as FounderIntake;
-      setIntake(parsed);
-      void research(parsed);
+      async function restoreValidation() {
+        if (!ideaId) {
+          setError("Your saved interview could not be found. Please complete the interview again.");
+          setLoading(false);
+          return;
+        }
+        const saved = localStorage.getItem("launchpilot-intake");
+        if (saved) {
+          const parsed = JSON.parse(saved) as FounderIntake;
+          setIntake(parsed);
+          await research(parsed);
+          return;
+        }
+        const response = await fetch(`/api/projects/${encodeURIComponent(ideaId)}`);
+        const data = await response.json();
+        if (!response.ok || !data.intake) {
+          setError(data.error || "Your saved interview could not be found. Please complete the interview again.");
+          setLoading(false);
+          return;
+        }
+        const restored = data.intake as FounderIntake;
+        setIntake(restored);
+        setCustomIdea(restored.rawIdea);
+        setCustomUser(restored.targetUser);
+        setCustomProblem(restored.problem);
+        localStorage.setItem("launchpilot-intake", JSON.stringify(restored));
+        if (data.evidence) {
+          setEvidence(data.evidence as EvidenceScore);
+          setRevisions(data.revisions || []);
+          setStage(stages.length - 1);
+          setLoading(false);
+          return;
+        }
+        await research(restored);
+      }
+      void restoreValidation().catch(() => {
+        setError("Your saved interview could not be found. Please complete the interview again.");
+        setLoading(false);
+      });
     }, 0);
     return () => window.clearTimeout(timer);
     // research intentionally runs once for the saved interview on entry.
