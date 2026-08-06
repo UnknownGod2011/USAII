@@ -49,6 +49,9 @@ export default function Home() {
               <Link className="rounded-full border border-stone-200 bg-white/80 px-6 py-3 text-sm font-semibold text-stone-900 hover:bg-white" href="/dashboard?demo=1">
               Try Demo User
             </Link>
+              <Link className="rounded-full border border-violet-200 bg-violet-50/80 px-6 py-3 text-sm font-semibold text-violet-900 hover:bg-violet-50" href="/syllabus">
+                Parse a Syllabus
+              </Link>
               <span className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-stone-600">
                 <Lock className="h-4 w-4" /> Privacy mode available
               </span>
